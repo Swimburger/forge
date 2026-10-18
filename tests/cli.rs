@@ -79,3 +79,36 @@ fn ts() {
     );
     std::fs::remove_dir_all(&out).unwrap();
 }
+
+#[test]
+fn mcp() {
+    let out = std::env::temp_dir().join(format!("forge-cli-mcp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    let result = forge(&["-", "--target", "mcp", "--out", out.to_str().unwrap()], SPEC);
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    for name in ["Cargo.toml", "src/main.rs", "src/tools.rs"] {
+        assert!(out.join(name).is_file(), "{name} is missing");
+    }
+    let tools = std::fs::read_to_string(out.join("src/tools.rs")).unwrap();
+    assert!(tools.contains(r#"name: "a_get","#), "{tools}");
+    std::fs::remove_dir_all(&out).unwrap();
+}
+
+/// The MCP server builds. It downloads the server's dependencies, so it only
+/// runs when asked for, with `cargo test --test cli -- --ignored`.
+#[test]
+#[ignore = "downloads the dependencies of the generated crate"]
+fn mcp_builds() {
+    let out = std::env::temp_dir().join(format!("forge-cli-mcp-build-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    let result = forge(&["-", "--target", "mcp", "--out", out.to_str().unwrap()], SPEC);
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let build = Command::new(env!("CARGO"))
+        .args(["build", "--quiet"])
+        .current_dir(&out)
+        .env_remove("RUSTFLAGS")
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    std::fs::remove_dir_all(&out).unwrap();
+}
