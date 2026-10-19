@@ -7,10 +7,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
 clap = { version = "4.6.7", features = ["derive"], optional = true }
+http = { version = "1", optional = true }
 rayon = "1.12.0"
+reqwest = { version = "0.13.5", optional = true }
+rmcp = { version = "3.5.1", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"], optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", optional = true }
+tokio = { version = "1.53.2", features = ["macros", "net", "rt-multi-thread", "signal"], optional = true }
 wasmtime = { version = "49.0.2", default-features = false, features = ["runtime", "cranelift", "component-model", "parallel-compilation", "std"], optional = true }
 wasmtime-wasi = { version = "49.0.2", default-features = false, features = ["p2"], optional = true }
 
@@ -29,6 +34,9 @@ default = ["cli"]
 cli = ["dep:clap", "dep:serde_json"]
 # `forge::wasm`, which runs plugins compiled to WebAssembly components.
 wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
+# `forge mcp`, which serves the methods of a document as the tools of an MCP
+# server, over HTTP or standard input and output.
+mcp = ["cli", "dep:axum", "dep:http", "dep:reqwest", "dep:rmcp", "dep:tokio"]
 
 [profile.release]
 strip = true # Drop symbols and debug info from the binary, which the npm packages ship.
@@ -44,6 +52,10 @@ required-features = ["cli"]
 [[test]]
 name = "cli"
 required-features = ["cli"]
+
+[[test]]
+name = "mcp"
+required-features = ["cli", "mcp"]
 
 [[test]]
 name = "wasm"

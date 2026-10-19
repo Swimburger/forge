@@ -3,7 +3,11 @@
 //! ```text
 //! forge openapi.json --target ts --out sdk
 //! forge openapi.json --target wasm://plugin.wasm --out sdk
+//! forge mcp openapi.json
 //! ```
+//!
+//! `forge mcp`, which serves the methods of the document as the tools of an
+//! MCP server, needs the `mcp` feature.
 
 use std::fs;
 use std::io::{self, Read};
@@ -13,21 +17,38 @@ use std::process::ExitCode;
 use clap::Parser;
 use forge::{Err, Forge};
 
+#[cfg(feature = "mcp")]
+mod mcp;
 mod ts;
 
+// The document, --target and --out are required unless a command is given,
+// and are `Option`s so that a command can leave them out.
 /// Generates an SDK from an OpenAPI document.
 #[derive(Parser)]
-#[command(version)]
+#[command(version, args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 struct Args {
+    #[cfg(feature = "mcp")]
+    #[command(subcommand)]
+    command: Option<Command>,
     /// The OpenAPI JSON document, or - to read it from standard input.
-    spec: PathBuf,
+    #[arg(required = true)]
+    spec: Option<PathBuf>,
     /// The language of the SDK: `ts` for TypeScript, or `wasm://PATH` for
     /// the plugin compiled to a WebAssembly component at PATH.
-    #[arg(long, value_parser = Target::parse)]
-    target: Target,
+    #[arg(long, value_parser = Target::parse, required = true)]
+    target: Option<Target>,
     /// The directory to write the SDK to.
-    #[arg(long)]
-    out: PathBuf,
+    #[arg(long, required = true)]
+    out: Option<PathBuf>,
+}
+
+/// What forge can do besides generating an SDK.
+#[cfg(feature = "mcp")]
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Serves the methods of an OpenAPI document as the tools of an MCP
+    /// server.
+    Mcp(mcp::Args),
 }
 
 /// What forge generates an SDK with.
@@ -68,20 +89,28 @@ fn main() -> ExitCode {
     }
 }
 
-/// Generates the SDK that `args` ask for.
+/// Runs the command `args` give, or else generates the SDK they ask for.
 fn run(args: Args) -> Result<(), Err> {
-    match args.target {
+    #[cfg(feature = "mcp")]
+    if let Some(Command::Mcp(args)) = args.command {
+        return mcp::run(args, read);
+    }
+    // Clap requires these when there is no command.
+    let (Some(spec), Some(target), Some(out)) = (args.spec, args.target, args.out) else {
+        unreachable!("clap requires the document, --target and --out");
+    };
+    match target {
         Target::Ts => {
-            let forge = read(&args.spec)?;
-            forge::write(&args.out, forge::run(&forge, &ts::Generator)?)
+            let forge = read(&spec)?;
+            forge::write(&out, forge::run(&forge, &ts::Generator)?)
         }
         #[cfg(feature = "wasm")]
         Target::Wasm(path) => {
             // Compiling the plugin and reading the document are both slow,
             // so they run at the same time.
-            let (plugin, forge) = rayon::join(|| forge::wasm::WasmPlugin::from_file(&path), || read(&args.spec));
+            let (plugin, forge) = rayon::join(|| forge::wasm::WasmPlugin::from_file(&path), || read(&spec));
             let (plugin, forge) = (plugin?, forge?);
-            forge::write(&args.out, forge::run(&forge, &plugin)?)
+            forge::write(&out, forge::run(&forge, &plugin)?)
         }
     }
 }
