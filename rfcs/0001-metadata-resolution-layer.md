@@ -1,0 +1,157 @@
+# RFC 0001: The metadata resolution layer
+
+- **Status:** Draft
+- **Date:** 2026-10-23
+- **Ticket:** FORGE-1 — *section off the fern stuff into a compatibility layer*
+- **Related:** FORGE-3 (vocabulary renames) · FORGE-4 (versioning RFC) · FORGE-5 (unread vendor key lint)
+
+## Summary
+
+Forge's engine reads vendor metadata extensions (`x-fern-*`, `x-stainless-skip`) directly, so everything downstream of the linked model inherits the vendors' vocabulary, formats, and limitations. This RFC adds a **metadata resolution layer** with three parts:
+
+1. a native `x-forge-*` vocabulary, designed on Forge's own terms rather than mirroring any vendor's;
+2. a pure library that resolves keys to primitives — native first, vendor adapters as fallback;
+3. a quarantined, feature-gated **compatibility layer** that is the only code holding vendor knowledge, and whose designed end state is wholesale deletion.
+
+After the boundary, the engine — reader, builder, linked model, plugin host, npm runtime — acts only on Forge primitives. Output for existing specs is unchanged, and the release is non-breaking.
+
+## Motivation
+
+Today the engine couples to vendors in five places:
+
+1. **Wire keys** — vendor names are hardcoded in the serde key enums (`DefinitionKey`, `ParameterKey::FieldName`, `SchemaKey::{ModelName, FieldName, Skip}` in `src/link/openapi.rs`).
+2. **Vendor value formats** — Fern's dotted-or-array group strings, Fern's five-value availability vocabulary, Stainless's `x-stainless-skip` (where a list of target names means *false*).
+3. **Error strings** — validation messages name vendor keys ("`x-fern-availability "ga" is not …`").
+4. **The consumed-key set** — the seven names excluded from the plugin passthrough are hand-listed in the deserializers and re-documented in the model docs.
+5. **Documentation** — the public model, the WIT, and the JS runtime attribute primitives to vendor keys; the WIT's doc comments ship in the npm package.
+
+Anything downstream — including the cf codebase — therefore depends on a vendor's extension format. Adding another vendor (Stainless, Scalar) means touching the parser, the linker, the docs, and the filter again.
+
+### What the production specs actually use
+
+Audit of the released aggregate (`openapi.forge.json`, 27.6 MB, sha `99544617…`):
+
+| Read by forge today | Uses | Present, **not** read | Uses |
+|---|---|---|---|
+| `x-fern-sdk-method-name` | 3,638 | `x-fern-enum` | 3,652 |
+| `x-fern-sdk-group-name` | 3,638 | `x-stainless-terraform-configurability` | 407 |
+| `x-fern-availability` | 3,444 | `x-stainless-deprecation-message` | 281 |
+| `x-fern-ignore` | 449 | `x-stability` | 240 |
+| `x-fern-parameter-name` | 108 | `x-stainless-collection-type` | 110 |
+| `x-fern-property-name` | 38 | `x-fern-audiences` | 80 |
+| `x-fern-type-name` | 2 | ~10 further Stainless / Fern keys | ~30 |
+| `x-stainless-skip` | 114 | `x-fern-sdk-variables` | 0 |
+
+## Goals
+
+- Nothing outside the resolution layer references `x-fern-*` or `x-stainless-*` — enforced mechanically.
+- Output for existing specs is unchanged, proven by byte-equality tests on the real aggregate.
+- Tests cover each supported primitive, from each accepted key.
+- No meaningful performance regression; parse throughput is benchmarked before and after.
+- All Fern (and Stainless) compat code and tests live in one folder, imported only through an aggregating library.
+- Native metadata is applied first; the compatibility layer is a fallback.
+- The compatibility layer can be completely deleted or turned off without affecting any `x-forge-*` extension.
+- The native vocabulary is not constrained by vendor naming, structure, or limitations — native keys are designed for Forge's model, and adapters do the translating.
+
+## Non-goals (this ticket)
+
+- Fern's structural behavior (allOf/anyOf handling, inline request types) — unchanged.
+- Operation ID prefixing.
+- Renaming Fern→Forge across the cf codebase (existing follow-up).
+- Dotted `operationId` derivation (`a.b.c.d` → group `[a,b,c]` + method `d`) — a follow-up that will land *in this layer* behind an opt-in flag.
+- New primitives for `x-fern-enum` (enum-value names — needs a model primitive that does not exist yet), `x-fern-audiences` (a visibility concept Forge has not designed), `x-stability`, `x-forge-sunset`, `x-stainless-deprecation-message`. These are flagged (FORGE-5) and stay unread; each would be a one-row additive addition later.
+- Treating the `fern-forge` docs package's own `x-fern-*` reading (a downstream consumer, like cf) — follow-up.
+
+## The native vocabulary
+
+| Native key | Form | Meaning | Compat source (the adapter translates) |
+|---|---|---|---|
+| `x-forge-method` | string | the method's name | `x-fern-sdk-method-name` |
+| `x-forge-group` | **array of strings**, top level first | the group path | `x-fern-sdk-group-name` (dotted string is Fern's format; the split lives in the adapter. Native has no dot syntax) |
+| `x-forge-ignore` | bool, positional | operation/alias → no method; property schema → no field | `x-fern-ignore` (operation) · `x-stainless-skip` (property; a list of targets counts as `false` — inside the adapter) |
+| `x-forge-availability` | `alpha` \| `beta` \| `preview` \| `generally-available` \| `deprecated` | lifecycle stage. The values are Forge's shipped vocabulary (public enum across Rust, WIT, JS); Fern merely coincides | `x-fern-availability` |
+| `x-forge-model-name` | string | the model's name (components / `$defs` schema) | `x-fern-type-name` |
+| `x-forge-property-name` | string | the property's field name | `x-fern-property-name` |
+| `x-forge-parameter-name` | string | the parameter's field name | `x-fern-parameter-name` |
+| `x-forge-hidden`, `x-forge-require-confirmation`, `x-forge-aliases`, `x-forge-commands`, `x-sensitive` | *(existing, unchanged)* | | — no vendor source; now owned by the native table |
+
+Design notes:
+
+- **Explicit position keys over one positional name key.** Fern used three name keys because its reader architecture had one visitor per OpenAPI object kind. We use explicit keys for a different, real reason: tools in the wild mangle `$ref` structure (inlining targets, dropping siblings), and when placement lies, the key name still carries the role — `x-forge-model-name` on a property schema can be ignored or flagged, where a positional `x-forge-name` would silently become a field name. Explicitness here is corruption-detection, not verbosity.
+- **One exclusion word, two positions.** "Excluded from generated surfaces" is one concept at two scopes; two words (`ignore` + `skip`) would be a memory tax for no disambiguation, and `skip` is Stainless's word.
+- **Arrays for groups.** JSON's native way to write a path. Accepting dotted strings natively would permanently import Fern's format into the native vocabulary; array-only now keeps the option to loosen later (the reverse — tightening later — would break specs). Fern's dotted strings keep working through the adapter for as long as Fern keys do.
+- **No misplacement validation in v1.** A known native key in a wrong position is silently ignored, exactly as Fern's keys are today. Adding validation later is a pure tightening that breaks no valid spec.
+
+## Resolution rules
+
+1. **Native applied, compat fallback** — per primitive, independently (a spec mid-migration may take the group from native and availability from Fern).
+2. **Silent native-wins** — when both a native key and a compat key are present, the compat value is ignored without comparison machinery. Consequence, to be documented in the metadata docs: a stale compat key silently diverges, and editing the compat key when a native key is present appears to do nothing.
+3. **Same key twice** → error (today's `duplicate field` behavior, unchanged).
+4. **Empty or punctuation-only values** fall back to the positional wire name, as today; validation errors name the key the author actually wrote (provenance), so existing Fern-keyed error expectations hold.
+5. **Dual-writing** (native and compat keys carrying the same value) is the supported pattern for keeping specs portable across engine versions during the transition: old engines read the compat key, new engines apply native.
+
+## Architecture
+
+```
+src/
+├─ metadata/      THE NATIVE LIBRARY — pure
+│   │             The x-forge-* table, the resolve() entry (native first),
+│   │             pure value readers, the consumed-key set.
+│   │             Never references compat. No serde, no arena coupling:
+│   │             its inputs are &str keys and small pure values.
+├─ compat/         THE COMPATIBILITY LAYER — feature "compat" (default on)
+│  ├─ mod.rs      the aggregator; its only pub(crate) item is resolve().
+│  │              The designed end state: delete this folder + the feature.
+│  ├─ fern.rs      every x-fern-* literal; Fern formats (dotted group
+│  │               split, availability vocabulary); Fern unit tests.
+│  └─ stainless.rs the x-stainless-skip reader; its unit tests.
+└─ link/
+   ├─ openapi.rs  OpenAPI's own keys only; every x- key asks metadata.
+   └─ read.rs     serde helpers; the keys! macro hoisted to crate
+                  visibility, since the library sits beside link/.
+```
+
+Properties, all deliberate:
+
+- **One-way dependencies**: `link → metadata → compat`, and nothing else imports compat. The reader asks native first, compat second — the fallback arm *is* the D4 rule.
+- **Purity**: the library's contract is `&str` keys and small values (`Vec` of group names, an availability enum, bools). All serde wiring and arena writes stay in `link`. This is what makes the library pluggable, standalone-consumable (a future `forge-ci validate` needs the key table, not the engine), and mechanically liftable into a real separate crate when the first standalone consumer appears (FORGE-5's work).
+- **Deletion is the designed end state.** `cargo build --no-default-features` proves the native vocabulary stands alone; when vendor keys reach end-of-life, deleting `compat/` touches nothing else — no `x-forge-*` extension changes, in behavior, docs, or WIT.
+- **Dispatch, not semantics**: the layer maps keys to primitives and normalizes simple values. Structural behavior — `x-forge-aliases` becoming methods, `x-forge-commands` describing groups — stays in the builder.
+
+## Enforcement
+
+- **Structural boundary — compiler-enforced (built-in Rust):** every vendor key constant is private to its adapter; the only thing outside `compat/` that can touch vendor knowledge is the aggregator's `resolve()`, which the reader calls. The feature gate makes compat removable, and `--no-default-features` CI builds keep proving it.
+- **Textual boundary — `tests/boundary.rs`:** scans `src/`, `tests/`, and `packages/forge/` (including the shipped `plugin/forge.wit`) for `x-fern` / `x-stainless` outside `src/compat/` and `tests/compat/`. Doc comments count — moving the WIT's "from `x-fern-availability`" attribution to `x-forge-availability` is part of the work. The test runs wherever `cargo test` runs; a `just boundary` alias targets it.
+- **Criterion mapping:** (1) nothing outside the layer references `x-fern-*` → the two mechanisms above; (2) output unchanged → zero model-shape changes, Fern-keyed specs resolve identically (equivalence tests + the full-aggregate native-vs-wasm byte-equality bench); (3) tests per primitive → below.
+
+## Test plan
+
+- `tests/parse/` — every fixture rewrites to native keys. Not find-and-replace: group values `"a.b"` become `["a","b"]`; the three Fern name keys become their explicit native keys; error assertions naming Fern keys move out.
+- `tests/compat/` — the vendor suite, mirroring `tests/parse`'s harness: for each primitive, parse(Fern-keyed fixture) == parse(native-keyed fixture); Fern format specifics (dotted vs array groups, duplicate-key errors, provenance error strings, Stainless's skip-list semantics).
+- `tests/boundary.rs` — the guard.
+- Existing tripwires keep working: `wit_is_current` (WIT regeneration is mechanical via `wit.mjs`), the wasm dump equality, native-vs-wasm generated-output byte equality.
+- Performance: divan parse benches before/after on the real aggregate (`FORGE_SPEC`); `tests/wasm.rs::bench` re-run; forge-bench re-pinned upstream after merge.
+
+## Release shape
+
+Non-breaking. The WIT changes are doc comments only — `forge:plugin@0.3.0` stays, bindings regenerate identically, no plugin rebuilds anywhere; npm gets an additive release (new native keys accepted, compat module added); the spec surface grows append-only; generated output is byte-identical. Vocabulary renames that *are* breaking (group→namespace, the availability word) are deliberately deferred to FORGE-3 so one breaking release absorbs all of them; the versioning policy that governs this is FORGE-4's RFC.
+
+## Alternatives considered
+
+- **Resolve-after-parse** (keep all `x-` keys as raw JSON, normalize in a second pass): most literal reading of "a resolution step", trivially provenance-aware — but it must retain every schema-level extension on the 27 MB aggregate (5,366 `x-auditable` alone) unless the reader consults a key table anyway, at which point it collapses into the chosen design with extra memory and a reimplementation of duplicate-key errors. Rejected on performance and diff size.
+- **Vendor-trait machinery** (a `Vendor` trait with Fern/Stainless/Scalar impls): no primitive overlaps across vendors today; the key table grows rows when one does. Rejected as over-engineering for now.
+- **One positional `x-forge-name`**: mirrors the model's single `Name` concept and is cleaner in the abstract — but when toolchains inline `$ref` targets, the model's name key rides into property positions and silently renames fields. Explicit keys turn that corruption into something ignorable or flaggable. Rejected on robustness.
+- **Separate `x-forge-skip` for properties**: two words for one concept, and `skip` is Stainless's word. Rejected.
+- **Accepting dotted group strings natively**: ergonomic continuity, but it permanently imports Fern's format into the native vocabulary; array-only now is the reversible choice. Rejected.
+- **Error on native/compat disagreement**: the strictest conflict rule, and consistent with the engine's general strictness — deferred as an open question in FORGE-4 in favor of silent native-wins (zero comparison machinery, no cost for correct specs; the drift risk is documented).
+- **Full crate split now** (workspace with a separate metadata crate): delivers "separate library" literally today at the cost of restructuring the OSS repo mid-beta and moving `Availability` into the library. Deferred: the pure contract makes the split a `git mv` when the first standalone consumer exists.
+- **Renaming `Group`/`Availability` now**: both are Fern-inherited words, but both renames break the plugin contract. Deferred to FORGE-3's single breaking wave.
+
+## Follow-ups
+
+| Ticket | What |
+|---|---|
+| FORGE-3 | Vocabulary renames in one breaking release: `group` → `namespace`, plus the availability word review; `x-forge-group`/`x-forge-availability` become permanent alias keys (one table row each). |
+| FORGE-4 | The versioning RFC: the four contracts, the rules this RFC assumes, and open questions (1.0 timing, warning channel, vendor-key EoL policy). |
+| FORGE-5 | Informational Forge CI lint flagging vendor keys the engine doesn't read, sourced from this layer's key table. |
+| (FORGE-1 follow-ups) | cf codebase Fern→Forge rename; dotted `operationId` derivation behind an opt-in flag. |
