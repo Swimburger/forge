@@ -44,7 +44,7 @@ Audit of the released aggregate (`openapi.forge.json`, 27.6 MB, sha `99544617…
 
 ## Goals
 
-- Nothing outside the resolution layer references `x-fern-*` or `x-stainless-*` — enforced mechanically.
+- Nothing in the engine outside the resolution layer references `x-fern-*` or `x-stainless-*` — enforced mechanically. The engine is `src/`, `tests/` and the `packages/forge` npm package; the docs packages in this repository (`astro-fern`, `fern-forge`, `cloudflare-api-site`) read vendor keys themselves and are outside this RFC (see Non-goals).
 - Output for existing specs is unchanged, proven by byte-equality tests on the real aggregate.
 - Tests cover each supported primitive, from each accepted key.
 - No meaningful performance regression; parse throughput is benchmarked before and after.
@@ -61,7 +61,7 @@ Audit of the released aggregate (`openapi.forge.json`, 27.6 MB, sha `99544617…
 - Dotted `operationId` derivation (`a.b.c.d` → group `[a,b,c]` + method `d`) — a follow-up that will land *in this layer* behind an opt-in flag.
 - Audiences. The ticket lists audiences as a lower-priority primitive; this RFC deliberately leaves `x-fern-audiences` unread (it needs a visibility concept Forge has not designed), flagged by FORGE-5. This is a scope deviation from the ticket text and needs the reviewers' agreement.
 - New primitives for `x-fern-enum` (enum-value names — needs a model primitive that does not exist yet), `x-stability`, `x-forge-sunset`, `x-stainless-deprecation-message`. These are flagged (FORGE-5) and stay unread; each would be a one-row additive addition later.
-- Treating the `fern-forge` docs package's own `x-fern-*` reading (a downstream consumer, like cf) — follow-up.
+- The docs packages' own `x-fern-*` reading (`fern-forge`, `astro-fern`, `cloudflare-api-site`: downstream consumers, like cf) — follow-up.
 
 ## The native vocabulary
 
@@ -120,7 +120,8 @@ src/
 │   │             pure values.
 ├─ compat/         THE COMPATIBILITY LAYER — feature "compat" (default on)
 │  ├─ mod.rs      the aggregator: one resolver per kind of object, trying
-│  │              each vendor in turn. The only thing link imports from here.
+│  │              each vendor in turn, and one name lookup per kind, for
+│  │              errors. The only things link imports from here.
 │  │              The designed end state: delete this folder + the feature.
 │  ├─ fern.rs      every x-fern-* literal, mapped onto metadata's primitives;
 │  │               Fern's value formats, as data (e.g. "a string splits on
@@ -129,7 +130,9 @@ src/
 │                  (a list of targets counts as false); unit tests.
 └─ link/
    ├─ resolve.rs  the orchestrator: native first, then compat behind
-   │              #[cfg(feature = "compat")] — the only cfg point.
+   │              #[cfg(feature = "compat")] — the only place link calls
+   │              compat. (The feature's other cfg points: `mod compat` in
+   │              lib.rs, and the compat-only items in metadata.)
    ├─ openapi.rs  OpenAPI's own keys only; every x- key asks resolve.rs.
    └─ read.rs     serde helpers, as today.
 ```
@@ -139,12 +142,14 @@ Properties, all deliberate:
 - **Dependencies**: `link → metadata` and `link → compat` (behind the feature), and `compat → metadata` (an adapter produces metadata's primitives). `metadata` imports neither of the others, so compat sits *beside* the native table rather than under it. `link/resolve.rs` asks native first, compat second — that fallback arm *is* resolution rule 2.
 - **Purity**: the library's contract is `&str` keys in and small values out: primitives, key names, and *format descriptors as data* (for example "a string splits on `.`" or "a list of targets counts as `false`"). The serde reading and the arena writes stay in `link` and are generic, driven by those descriptors. This is what makes the library pluggable, standalone-consumable (a future `forge-ci validate` needs the key table, not the engine), and mechanically liftable into a real separate crate when the first standalone consumer appears (FORGE-5's work).
 - **The availability vocabulary is native.** The five values live in the native table (they are shipped public API); `fern.rs` only maps `x-fern-availability` onto that primitive.
-- **Deletion is the designed end state.** `cargo build --no-default-features --features cli` proves the native vocabulary stands alone; when vendor keys reach end-of-life, deleting `compat/` and the cfg arms in `link/resolve.rs` (one for each kind of object) touches nothing else — no `x-forge-*` extension changes, in behavior, docs, or WIT.
+- **Deletion is the designed end state.** `cargo build --no-default-features --features cli` proves the native vocabulary stands alone. When vendor keys reach end-of-life, deleting the layer means removing `src/compat/` and `tests/compat/`, `mod compat` in `src/lib.rs`, the `compat` cfg arms in `link/resolve.rs` (a resolver and a name lookup for each kind of object the layer reads: operations and aliases, parameters, schemas), and the `compat` feature and its `[[test]]` entry in `Cargo.toml`. No `x-forge-*` extension changes, in behavior, docs, or WIT.
+  - *What a deletion leaves behind.* Some native-side code exists only for the layer and compiles, unused, without it: `Hit::compat` and `Hit::after`, `Tier::Compat`, `COMPAT_SLOTS`, the value formats only vendors use (`GroupFormat::StringOrArray`, `BoolFormat::BoolOrTargets`) and their readers in `link/openapi.rs`, and the sentence in `Method::extensions`'s docs about the keys the compatibility layer reads. Removing them is a mechanical follow-on step, not a prerequisite.
+- **With compat off, vendor keys are ordinary extensions.** Built without the feature, the engine does not drop `x-fern-*` and `x-stainless-*` keys: like any other `x-` key it does not read, an operation's vendor keys are kept and given to plugins by `Method::extensions`. Native behavior is the same either way; what plugins see in `extensions()` is not.
 - **Dispatch, not semantics**: the layer maps keys to primitives and normalizes simple values. Structural behavior — `x-forge-aliases` becoming methods, `x-forge-commands` describing groups — stays in the builder.
 
 ## Enforcement
 
-- **Structural boundary — compiler-enforced (built-in Rust):** every vendor key literal is private to its adapter; the only thing outside `compat/` that can touch vendor knowledge is the aggregator's per-object resolvers, which `link/resolve.rs` calls. The feature gate makes compat removable, and builds without the `compat` feature keep proving it.
+- **Structural boundary — compiler-enforced (built-in Rust):** every vendor key literal is private to its adapter; the only things outside `compat/` that can touch vendor knowledge are the aggregator's per-object resolvers and name lookups, which `link/resolve.rs` calls. The name lookups are how a vendor key's name reaches an error message (rule 4's provenance) without `link` holding the literal: it reaches `link` as data, never as code that matches on it. The feature gate makes compat removable, and builds without the `compat` feature keep proving it.
 - **Textual boundary — `tests/boundary.rs`:** scans `src/`, `tests/`, and `packages/forge/` (including the shipped `plugin/forge.wit`) for `x-fern` / `x-stainless` outside `src/compat/` and `tests/compat/`. Doc comments count — moving the WIT's "from `x-fern-availability`" attribution to `x-forge-availability` is part of the work. The test runs wherever `cargo test` runs; a `just boundary` alias targets it.
 - **Criterion mapping:** (1) nothing outside the layer references `x-fern-*` → the two mechanisms above; (2) output unchanged → zero model-shape changes, Fern-keyed specs resolve identically (equivalence tests + the full-aggregate native-vs-wasm byte-equality bench); (3) tests per primitive → below.
 
@@ -164,9 +169,9 @@ The implementation was checked against the unmodified engine on the released agg
 - **Generated output.** `forge --target ts` on the aggregate writes the same 3,381 files, byte for byte (`diff -r`). The aggregate's 155 `x-sensitive` keys are read through the deprecated alias; the dump's 210 sensitive fields are unchanged.
 - **The model.** The full model dump (the repo's own `tests/wasm/dump.rs`: every group, method, availability, hidden flag, confirmation, extension and field name) is identical between the old and new engines: 197,702 lines, covering 3,021 availability values, 1,259 hidden flags, 217 confirmations and 4,695 extension entries. The generated TypeScript consumes none of those four, which is why the dump, not the output diff, is what proves them.
 - **Across the plugin boundary.** `tests/wasm.rs`, including the ignored `bench` on the aggregate, reports identical output and dump, native versus WASM, for 1,317 groups and 3,381 files; `wit_is_current` holds with the regenerated WIT.
-- **Independence.** `cargo test --no-default-features --features cli` (compat off) passes all 445 tests of the native suite, including the deprecated `x-sensitive` alias; with compat on, 495 pass. Clippy is clean in the library-alone, compat-off and all-features configurations.
-- **The checks can fail.** Breaking the native-wins rule fails 8 compat tests; planting a vendor name in a doc comment fails the boundary test, naming the file and line.
-- **Performance.** Measured with `benches/compare.sh` (`just bench-compare`): parse and link of the aggregate, paired against the unmodified engine, each pair run base–new–new–base so that drift in the machine's speed cancels, and pairs in which the machine changed speed left out. The working tree is 0–1% slower (about +0.45 ms of 41.8 ms, standard error 0.17 ms, on a machine at full speed; −0.04 ms, standard error 0.28, on the same machine throttled). Peak memory is +0.55%, with the same peak allocation count. Parsing is under a tenth of a whole `forge` run on the aggregate (about 0.5 s), so the end-to-end change is under 0.1%.
+- **Independence.** `cargo test --no-default-features --features cli` (compat off) passes all 445 tests of the native suite, including the deprecated `x-sensitive` alias; with compat on, 498 pass. Clippy is clean in the library-alone, compat-off and all-features configurations.
+- **The checks can fail.** Breaking the precedence rule (keeping the last value written, whatever its tier) fails 11 compat tests, and 1 `tests/parse` test, the deprecated `x-sensitive` one, with compat on and off; planting a vendor name in a doc comment fails the boundary test, naming the file and line.
+- **Performance.** Measured with `benches/compare.sh` (`just bench-compare`): parse and link of the aggregate, paired against the unmodified engine, each pair run base–new–new–base so that drift in the machine's speed cancels, and pairs in which the machine changed speed left out. On the final code (`4e31404`), over 12 pairs, it is 0.8% slower: +0.34 ms of 42.0 ms, standard error 0.18 ms (t = 1.9), slower in 9 of 12 pairs. Earlier runs during the work put it between −0.1% and +1.1%, depending on the machine's speed state. Peak memory is 68.80 MB against 68.75 MB (+0.07%), with the same peak allocation count. Parsing is under a tenth of a whole `forge` run on the aggregate (about 0.5 s), so the end-to-end change is under 0.1%.
   - *Where it went.* Profiling (samply, with line tables, attributing inlined frames) found no hot spot of the layer's own: most of the difference is LLVM inlining parts of serde_json's key loop into `SchemaObject::read_object` and laying the code out differently, which moves with any change. Three things were measured and kept: each table turns away keys outside its prefix (`x-forge-`, `x-fern-`, `x-stainless-`) before matching, and only `x-` keys are asked about, so a skipped key costs one compare; and a `Hit` carries only its field and slot, the key's name looked up by slot when an error needs it, so the reader's per-key result fits in registers (16 bytes, as before, not 24).
   - *Ruling things out.* Unpaired, sequential runs had suggested +1.5–1.9%; that was the machine warming up through the session, which the ABBA order removes. A single run of either binary differs from the next by about as much as the change measured here, so a smaller difference needs more pairs, not a better single run.
 
