@@ -239,33 +239,42 @@ pub(super) struct Operation {
 }
 
 /// A value an extension gives, and the key it came from, so that an error can
-/// name the key the document wrote. The value of the strongest [`Tier`] of
-/// key is kept, whatever order the keys are written in.
+/// name the key the document wrote.
 #[derive(Default)]
 pub(super) struct Val<T> {
     pub(super) value: T,
     /// The slot of the key that gave the value, which names it. It means
     /// nothing if no key gave one.
     pub(super) slot: u8,
-    tier: Tier,
 }
 
 impl<T> Val<T> {
     /// Keeps `value`, which `hit` gave, unless a key of a stronger tier
-    /// gave the value held.
-    fn set<F>(&mut self, hit: &Hit<F>, value: T) {
-        if takes(hit, &mut self.tier) {
+    /// than `tier`, the tier of the value held, gave it.
+    fn set<F>(&mut self, hit: &Hit<F>, value: T, tier: &mut Tier) {
+        if takes(hit, tier) {
             self.value = value;
             self.slot = hit.slot;
         }
     }
 }
 
+/// The tier of the key that gave each value of a [`Definition`] so far, while
+/// it is read.
+#[derive(Default)]
+struct DefinitionTiers {
+    method_name: Tier,
+    group_names: Tier,
+    ignore: Tier,
+    availability: Tier,
+}
+
 /// Reports whether a value from the key of `hit` replaces the one read so
 /// far, which came from a key of tier `tier`, and records the tier of the
-/// value kept. Keys of the same tier that say the same thing are different
-/// keys of the same object, which no table has, so equal tiers do not
-/// happen; were they to, the last written would be kept.
+/// value kept. Equal tiers do not happen: a key written twice is an error
+/// before it gets here, and no two keys of one tier say the same thing,
+/// which the tests of `metadata` and `compat` check. Were they to, the last
+/// written would be kept.
 fn takes<F>(hit: &Hit<F>, tier: &mut Tier) -> bool {
     if hit.tier >= *tier {
         *tier = hit.tier;
@@ -318,8 +327,6 @@ pub(super) struct Parameter {
     pub(super) content: Span<(Str, Schema)>,
     /// The name of the parameter's field, or empty for none.
     pub(super) field_name: Str,
-    /// The tier of the key that gave `field_name`.
-    field_name_tier: Tier,
 }
 
 /// Where a parameter is sent: the `in` of a Parameter Object.
@@ -445,12 +452,16 @@ pub(super) struct SchemaObject {
     /// Whether a property's schema is marked to be left out: it makes no
     /// field.
     pub(super) ignore: bool,
-    /// The tier of the key that gave each of `model_name`, `field_name`,
-    /// `ignore` and `sensitive`, so that no weaker key replaces it.
-    model_name_tier: Tier,
-    field_name_tier: Tier,
-    ignore_tier: Tier,
-    sensitive_tier: Tier,
+}
+
+/// The tier of the key that gave each extension value of a [`SchemaObject`]
+/// so far, while it is read.
+#[derive(Default)]
+struct SchemaTiers {
+    model_name: Tier,
+    field_name: Tier,
+    ignore: Tier,
+    sensitive: Tier,
 }
 
 /// A value of `type` in a Schema Object.
@@ -1297,23 +1308,24 @@ impl Definition {
         doc: &mut Doc,
         map: &mut A,
         hit: Hit<DefinitionField>,
+        tiers: &mut DefinitionTiers,
     ) -> Result<(), A::Error> {
         match hit.field {
             DefinitionField::Method => {
                 let name = map.next_value_seed(seed::<ReadStr>(doc))?;
-                self.method_name.set(&hit, name);
+                self.method_name.set(&hit, name, &mut tiers.method_name);
             }
             DefinitionField::Group => {
                 let names = map.next_value_seed(seed::<GroupNames>(doc))?;
-                self.group_names.set(&hit, names);
+                self.group_names.set(&hit, names, &mut tiers.group_names);
             }
             DefinitionField::Ignore(format) => {
                 let ignore = read_bool(map, format)?;
-                self.ignore.set(&hit, ignore);
+                self.ignore.set(&hit, ignore, &mut tiers.ignore);
             }
             DefinitionField::Availability => {
                 let availability = map.next_value_seed(seed::<ReadStr>(doc))?;
-                self.availability.set(&hit, Some(availability));
+                self.availability.set(&hit, Some(availability), &mut tiers.availability);
             }
             DefinitionField::Hidden => self.hidden = map.next_value()?,
             DefinitionField::Confirmation => {
@@ -1337,13 +1349,14 @@ impl ReadObject for Alias {
     fn read_object<'de, A: MapAccess<'de>>(doc: &mut Doc, mut map: A) -> Result<Definition, A::Error> {
         let mut definition = Definition::default();
         let mut seen = 0;
+        let mut tiers = DefinitionTiers::default();
         // As for an operation.
         let mut extensions = Vec::new();
         while let Some(field) = map.next_key::<AliasField>()? {
             match field {
                 AliasField::Definition(hit) => {
                     resolve::once(&hit, &mut seen)?;
-                    definition.read_value(doc, &mut map, hit)?;
+                    definition.read_value(doc, &mut map, hit, &mut tiers)?;
                 }
                 AliasField::Extension(name) => json::insert(&mut extensions, name, map.next_value()?),
                 AliasField::Other => skip(&mut map)?,
@@ -1502,6 +1515,7 @@ impl ReadObject for Operation {
         let mut operation = Operation::default();
         let mut seen = 0;
         let mut seen_definition = 0;
+        let mut tiers = DefinitionTiers::default();
         // Kept apart until the operation is read, so that an extension
         // written again can replace the first. Empty, it allocates nothing.
         let mut extensions = Vec::new();
@@ -1510,7 +1524,7 @@ impl ReadObject for Operation {
                 OperationField::Key(key) => key,
                 OperationField::Definition(hit) => {
                     resolve::once(&hit, &mut seen_definition)?;
-                    operation.definition.read_value(doc, &mut map, hit)?;
+                    operation.definition.read_value(doc, &mut map, hit, &mut tiers)?;
                     continue;
                 }
                 OperationField::Aliases => {
@@ -1612,6 +1626,7 @@ impl ReadObject for Parameter {
         let mut param = Parameter::default();
         let mut seen = 0;
         let mut seen_extensions = 0;
+        let mut field_name_tier = Tier::Unset;
         while let Some(entry) = map.next_key::<ParameterEntry>()? {
             let key = match entry {
                 ParameterEntry::Extension(hit) => {
@@ -1619,7 +1634,7 @@ impl ReadObject for Parameter {
                     match hit.field {
                         ParameterField::Name => {
                             let name = map.next_value_seed(seed::<ReadStr>(doc))?;
-                            if takes(&hit, &mut param.field_name_tier) {
+                            if takes(&hit, &mut field_name_tier) {
                                 param.field_name = name;
                             }
                         }
@@ -1758,6 +1773,7 @@ impl ReadObject for SchemaObject {
         let mut schema = SchemaObject::default();
         let mut seen = 0;
         let mut seen_extensions = 0;
+        let mut tiers = SchemaTiers::default();
         while let Some(entry) = map.next_key::<SchemaEntry>()? {
             let key = match entry {
                 SchemaEntry::Extension(hit) => {
@@ -1765,25 +1781,25 @@ impl ReadObject for SchemaObject {
                     match hit.field {
                         SchemaField::ModelName => {
                             let name = map.next_value_seed(seed::<ReadStr>(doc))?;
-                            if takes(&hit, &mut schema.model_name_tier) {
+                            if takes(&hit, &mut tiers.model_name) {
                                 schema.model_name = name;
                             }
                         }
                         SchemaField::PropertyName => {
                             let name = map.next_value_seed(seed::<ReadStr>(doc))?;
-                            if takes(&hit, &mut schema.field_name_tier) {
+                            if takes(&hit, &mut tiers.field_name) {
                                 schema.field_name = name;
                             }
                         }
                         SchemaField::Ignore(format) => {
                             let ignore = read_bool(&mut map, format)?;
-                            if takes(&hit, &mut schema.ignore_tier) {
+                            if takes(&hit, &mut tiers.ignore) {
                                 schema.ignore = ignore;
                             }
                         }
                         SchemaField::Sensitive => {
                             let sensitive = map.next_value()?;
-                            if takes(&hit, &mut schema.sensitive_tier) {
+                            if takes(&hit, &mut tiers.sensitive) {
                                 schema.sensitive = sensitive;
                             }
                         }

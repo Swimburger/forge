@@ -275,6 +275,24 @@ pub(crate) fn availability(value: &str) -> Option<Availability> {
     }
 }
 
+/// Asserts that no two of `keys` that `read` reads say the same thing with
+/// the same tier. Which key's value is kept is decided by tier alone, so two
+/// keys of one tier for one thing would make it depend on the order the
+/// keys are written in.
+#[cfg(test)]
+#[track_caller]
+pub(crate) fn assert_one_key_per_tier<F>(keys: &[&str], read: impl Fn(&str) -> Option<Hit<F>>) {
+    let mut said: Vec<(std::mem::Discriminant<F>, Tier, &str)> = Vec::new();
+    for &key in keys {
+        let hit = read(key).unwrap_or_else(|| panic!("{key} is not read"));
+        let what = std::mem::discriminant(&hit.field);
+        if let Some(&(_, _, other)) = said.iter().find(|&&(w, tier, _)| w == what && tier == hit.tier) {
+            panic!("{other} and {key} say the same thing with the same tier");
+        }
+        said.push((what, hit.tier, key));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +339,21 @@ mod tests {
         read_as_itself(parameters, &PARAMETER_NAMES, parameter);
         read_as_itself(schemas, &SCHEMA_NAMES, schema);
         read_as_itself(documents, &DOCUMENT_NAMES, document);
+    }
+
+    #[test]
+    fn no_two_native_keys_say_the_same_thing_with_the_same_tier() {
+        let [definitions, parameters, schemas, documents] = native_keys();
+        assert_one_key_per_tier(definitions, definition);
+        assert_one_key_per_tier(parameters, parameter);
+        assert_one_key_per_tier(schemas, schema);
+        assert_one_key_per_tier(documents, document);
+    }
+
+    #[test]
+    #[should_panic(expected = "x-forge-sensitive and x-forge-sensitive say the same thing with the same tier")]
+    fn one_key_per_tier_finds_two() {
+        assert_one_key_per_tier(&["x-forge-sensitive", "x-forge-sensitive"], schema);
     }
 
     #[test]

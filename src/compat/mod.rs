@@ -64,8 +64,7 @@ pub(crate) fn schema_name(n: u8) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::COMPAT_SLOTS;
-    use crate::metadata::Tier;
+    use crate::metadata::{self, COMPAT_SLOTS, Tier};
 
     /// Asserts that each key in `names` is read by `read` as a key that is
     /// not native, whose slot `name` names it by.
@@ -84,6 +83,30 @@ mod tests {
         read_as_itself(&fern::PARAMETER_NAMES, parameter, parameter_name);
         read_as_itself(&fern::SCHEMA_NAMES, schema, schema_name);
         read_as_itself(&stainless::SCHEMA_NAMES, schema, schema_name);
+    }
+
+    #[test]
+    fn no_two_keys_say_the_same_thing_with_the_same_tier() {
+        // As `link` reads them: native first, then the adapters.
+        let keys = |native: &[&'static str], adapters: &[&[&'static str]]| -> Vec<&'static str> {
+            native
+                .iter()
+                .chain(adapters.iter().flat_map(|keys| keys.iter()))
+                .copied()
+                .collect()
+        };
+        let definitions = keys(&metadata::DEFINITION_NAMES, &[&fern::DEFINITION_NAMES]);
+        let parameters = keys(&metadata::PARAMETER_NAMES, &[&fern::PARAMETER_NAMES]);
+        let schemas = keys(
+            &metadata::SCHEMA_NAMES,
+            &[&fern::SCHEMA_NAMES, &stainless::SCHEMA_NAMES],
+        );
+
+        metadata::assert_one_key_per_tier(&definitions, |key| {
+            metadata::definition(key).or_else(|| definition(key))
+        });
+        metadata::assert_one_key_per_tier(&parameters, |key| metadata::parameter(key).or_else(|| parameter(key)));
+        metadata::assert_one_key_per_tier(&schemas, |key| metadata::schema(key).or_else(|| schema(key)));
     }
 
     #[test]
