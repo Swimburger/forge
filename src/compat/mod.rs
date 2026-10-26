@@ -65,6 +65,7 @@ pub(crate) fn schema_name(n: u8) -> &'static str {
 mod tests {
     use super::*;
     use crate::metadata::COMPAT_SLOTS;
+    use crate::metadata::Tier;
 
     /// Asserts that each key in `names` is read by `read` as a key that is
     /// not native, whose slot `name` names it by.
@@ -72,7 +73,7 @@ mod tests {
     fn read_as_itself<F>(names: &[&'static str], read: fn(&str) -> Option<Hit<F>>, name: fn(u8) -> &'static str) {
         for &key in names {
             let hit = read(key).unwrap_or_else(|| panic!("{key} is not read"));
-            assert!(!hit.is_native(), "{key}");
+            assert_eq!(hit.tier, Tier::Compat, "{key}");
             assert_eq!(name(hit.slot - COMPAT_SLOTS), key);
         }
     }

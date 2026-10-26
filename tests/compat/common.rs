@@ -23,7 +23,7 @@ pub fn parse_err(json: &str) -> String {
 
 /// Returns an OpenAPI 3.0.3 document with one operation, `GET /a`, that has
 /// the members `keys`, written as the inside of a JSON object, each followed
-/// by a comma, such as `"x-forge-method": "get",`.
+/// by a comma, such as `"x-forge-method-name": "get",`.
 pub fn operation_with(keys: &str) -> String {
     format!(
         r#"{{"openapi": "3.0.3", "info": {{"title": "t", "version": "1"}},
@@ -36,7 +36,7 @@ pub fn operation_with(keys: &str) -> String {
 pub fn responding_with(schema: &str, schemas: &str) -> String {
     format!(
         r#"{{"openapi": "3.0.3", "info": {{"title": "t", "version": "1"}},
-          "paths": {{"/a": {{"get": {{"x-forge-group": ["a"], "x-forge-method": "get",
+          "paths": {{"/a": {{"get": {{"x-forge-group": ["a"], "x-forge-method-name": "get",
             "responses": {{"200": {{"description": "ok", "content": {{"application/json": {{"schema": {schema}}}}}}}}}}}}}}},
           "components": {{"schemas": {schemas}}}}}"#
     )

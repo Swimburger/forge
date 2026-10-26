@@ -29,7 +29,7 @@ use crate::Name;
 use crate::arena::{Id, List, Span, Str, Strings};
 use crate::json::{self, Json};
 use crate::metadata::{
-    self, BoolFormat, DefinitionField, DocumentField, GroupFormat, Hit, ParameterField, SchemaField,
+    self, BoolFormat, DefinitionField, DocumentField, GroupFormat, Hit, ParameterField, SchemaField, Tier,
 };
 
 /// An OpenAPI document: the fields of the OpenAPI Object at its root, and
@@ -241,22 +241,22 @@ pub(super) struct Operation {
 }
 
 /// A value an extension gives, and the key it came from, so that an error can
-/// name the key the document wrote. A native key's value is kept over any
-/// other's, whatever order they are written in.
+/// name the key the document wrote. The value of the strongest [`Tier`] of
+/// key is kept, whatever order the keys are written in.
 #[derive(Default)]
 pub(super) struct Val<T> {
     pub(super) value: T,
     /// The slot of the key that gave the value, which names it. It means
     /// nothing if no key gave one.
     pub(super) slot: u8,
-    native: bool,
+    tier: Tier,
 }
 
 impl<T> Val<T> {
-    /// Keeps `value`, which `hit` gave, unless a native key gave the value
-    /// held and `hit` is not native.
+    /// Keeps `value`, which `hit` gave, unless a key of a stronger tier
+    /// gave the value held.
     fn set<F>(&mut self, hit: &Hit<F>, value: T) {
-        if takes(hit, &mut self.native) {
+        if takes(hit, &mut self.tier) {
             self.value = value;
             self.slot = hit.slot;
         }
@@ -264,11 +264,13 @@ impl<T> Val<T> {
 }
 
 /// Reports whether a value from the key of `hit` replaces the one read so
-/// far, which came from a native key if `native` is set, and records where
-/// the value kept came from.
-fn takes<F>(hit: &Hit<F>, native: &mut bool) -> bool {
-    if hit.is_native() || !*native {
-        *native = hit.is_native();
+/// far, which came from a key of tier `tier`, and records the tier of the
+/// value kept. Keys of the same tier that say the same thing are different
+/// keys of the same object, which no table has, so equal tiers do not
+/// happen; were they to, the last written would be kept.
+fn takes<F>(hit: &Hit<F>, tier: &mut Tier) -> bool {
+    if hit.tier >= *tier {
+        *tier = hit.tier;
         return true;
     }
     false
@@ -318,8 +320,8 @@ pub(super) struct Parameter {
     pub(super) content: Span<(Str, Schema)>,
     /// The name of the parameter's field, or empty for none.
     pub(super) field_name: Str,
-    /// Whether a native key gave `field_name`.
-    field_name_native: bool,
+    /// The tier of the key that gave `field_name`.
+    field_name_tier: Tier,
 }
 
 /// Where a parameter is sent: the `in` of a Parameter Object.
@@ -434,8 +436,8 @@ pub(super) struct SchemaObject {
     /// `readOnly`: the value appears in responses, and a client should not
     /// send it.
     pub(super) read_only: bool,
-    /// Whether the schema is marked `x-sensitive: true`: the value is a
-    /// secret, such as a password or a token.
+    /// Whether the schema is marked `x-forge-sensitive: true`: the value is
+    /// a secret, such as a password or a token.
     pub(super) sensitive: bool,
     /// The name of the model, for a schema in `components.schemas`, or
     /// empty for none.
@@ -445,11 +447,12 @@ pub(super) struct SchemaObject {
     /// Whether a property's schema is marked to be left out: it makes no
     /// field.
     pub(super) ignore: bool,
-    /// Whether a native key gave `model_name`, `field_name` and `ignore`,
-    /// each, so that no other key replaces it.
-    model_name_native: bool,
-    field_name_native: bool,
-    ignore_native: bool,
+    /// The tier of the key that gave each of `model_name`, `field_name`,
+    /// `ignore` and `sensitive`, so that no weaker key replaces it.
+    model_name_tier: Tier,
+    field_name_tier: Tier,
+    ignore_tier: Tier,
+    sensitive_tier: Tier,
 }
 
 /// A value of `type` in a Schema Object.
@@ -1625,7 +1628,7 @@ impl ReadObject for Parameter {
                     match hit.field {
                         ParameterField::Name => {
                             let name = map.next_value_seed(seed::<ReadStr>(doc))?;
-                            if takes(&hit, &mut param.field_name_native) {
+                            if takes(&hit, &mut param.field_name_tier) {
                                 param.field_name = name;
                             }
                         }
@@ -1771,23 +1774,28 @@ impl ReadObject for SchemaObject {
                     match hit.field {
                         SchemaField::ModelName => {
                             let name = map.next_value_seed(seed::<ReadStr>(doc))?;
-                            if takes(&hit, &mut schema.model_name_native) {
+                            if takes(&hit, &mut schema.model_name_tier) {
                                 schema.model_name = name;
                             }
                         }
                         SchemaField::PropertyName => {
                             let name = map.next_value_seed(seed::<ReadStr>(doc))?;
-                            if takes(&hit, &mut schema.field_name_native) {
+                            if takes(&hit, &mut schema.field_name_tier) {
                                 schema.field_name = name;
                             }
                         }
                         SchemaField::Ignore(format) => {
                             let ignore = read_bool(&mut map, format)?;
-                            if takes(&hit, &mut schema.ignore_native) {
+                            if takes(&hit, &mut schema.ignore_tier) {
                                 schema.ignore = ignore;
                             }
                         }
-                        SchemaField::Sensitive => schema.sensitive = map.next_value()?,
+                        SchemaField::Sensitive => {
+                            let sensitive = map.next_value()?;
+                            if takes(&hit, &mut schema.sensitive_tier) {
+                                schema.sensitive = sensitive;
+                            }
+                        }
                     }
                     continue;
                 }

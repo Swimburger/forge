@@ -70,18 +70,19 @@ pub(super) fn schema(key: &str) -> Option<Hit<SchemaField>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::Tier;
 
     #[test]
     fn each_key_is_read_as_itself_and_as_not_native() {
         for key in [METHOD_NAME, GROUP_NAME, IGNORE, AVAILABILITY] {
             let hit = definition(key).unwrap_or_else(|| panic!("{key} is not a definition key"));
-            assert!(!hit.is_native(), "{key}");
+            assert_eq!(hit.tier, Tier::Compat, "{key}");
         }
         let hit = parameter(PARAMETER_NAME).unwrap();
-        assert!(!hit.is_native(), "{PARAMETER_NAME}");
+        assert_eq!(hit.tier, Tier::Compat, "{PARAMETER_NAME}");
         for key in [TYPE_NAME, PROPERTY_NAME] {
             let hit = schema(key).unwrap_or_else(|| panic!("{key} is not a schema key"));
-            assert!(!hit.is_native(), "{key}");
+            assert_eq!(hit.tier, Tier::Compat, "{key}");
         }
     }
 

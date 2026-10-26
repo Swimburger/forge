@@ -13,6 +13,12 @@ use std::path::{Path, PathBuf};
 /// What the extensions of each tool forge reads begin with.
 const VENDORS: [&str; 2] = ["x-fern", "x-stainless"];
 
+/// Returns whether `line` names `vendor`, as written or as an identifier
+/// spells it, with `_` for `-`, as in a test named after a key.
+fn names(line: &str, vendor: &str) -> bool {
+    line.contains(vendor) || line.contains(&vendor.replace('-', "_"))
+}
+
 /// Where those names may be: the layer, its tests, and this file, which
 /// writes them to look for them.
 const ALLOWED: [&str; 3] = ["src/compat/", "tests/compat/", "tests/boundary.rs"];
@@ -73,7 +79,7 @@ fn no_extension_of_another_tool_is_named_outside_the_compatibility_layer() {
             continue;
         }
         for (i, line) in text.lines().enumerate() {
-            if VENDORS.iter().any(|vendor| line.contains(vendor)) {
+            if VENDORS.iter().any(|vendor| names(line, vendor)) {
                 found.push(format!("{path}:{}: {}", i + 1, line.trim()));
             }
         }

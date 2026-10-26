@@ -267,7 +267,7 @@ export interface Field {
    * though the same model's field appears in responses: `readOnly`.
    */
   readonly readOnly: boolean;
-  /** Whether the value is a secret, such as a password or a token, to keep out of logs: `x-sensitive`. */
+  /** Whether the value is a secret, such as a password or a token, to keep out of logs: `x-forge-sensitive`. */
   readonly sensitive: boolean;
   /** The `default` of the property's schema, or undefined if it has none. */
   readonly default: Json | undefined;

@@ -2002,11 +2002,11 @@ impl<'d> Builder<'d> {
 
     /// Returns whether `schema` is read-only and sensitive, as a field
     /// gives them: whether it or any schema along its chain of `$ref`s has
-    /// `readOnly: true`, and `x-sensitive: true`.
+    /// `readOnly: true`, and `x-forge-sensitive: true`.
     ///
     /// A `readOnly` next to a `$ref` counts from OpenAPI 3.1, and is
     /// ignored in 3.0, as every keyword next to a `$ref` is. An
-    /// `x-sensitive` next to a `$ref` counts in every version, since tools
+    /// `x-forge-sensitive` next to a `$ref` counts in every version, since tools
     /// commonly honour extensions there. The chain stops at a `$ref` that
     /// does not point to a schema, which reading the schema's type
     /// reports, and after 32 `$ref`s, which lead back to themselves.

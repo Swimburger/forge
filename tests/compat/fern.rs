@@ -9,7 +9,9 @@ fn method_group_and_availability_are_read_as_native() {
         &operation_with(
             r#""x-fern-sdk-group-name": ["accounts"], "x-fern-sdk-method-name": "list", "x-fern-availability": "beta","#,
         ),
-        &operation_with(r#""x-forge-group": ["accounts"], "x-forge-method": "list", "x-forge-availability": "beta","#),
+        &operation_with(
+            r#""x-forge-group": ["accounts"], "x-forge-method-name": "list", "x-forge-availability": "beta","#,
+        ),
     );
 }
 
@@ -21,7 +23,7 @@ fn every_availability_is_read() {
                 r#""x-fern-sdk-group-name": ["a"], "x-fern-sdk-method-name": "get", "x-fern-availability": "{availability}","#
             )),
             &operation_with(&format!(
-                r#""x-forge-group": ["a"], "x-forge-method": "get", "x-forge-availability": "{availability}","#
+                r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-availability": "{availability}","#
             )),
         );
     }
@@ -31,7 +33,7 @@ fn every_availability_is_read() {
 fn a_group_written_as_a_string_is_split_on_dots() {
     assert_same(
         &operation_with(r#""x-fern-sdk-group-name": "a.b.c", "x-fern-sdk-method-name": "get","#),
-        &operation_with(r#""x-forge-group": ["a", "b", "c"], "x-forge-method": "get","#),
+        &operation_with(r#""x-forge-group": ["a", "b", "c"], "x-forge-method-name": "get","#),
     );
 }
 
@@ -39,7 +41,7 @@ fn a_group_written_as_a_string_is_split_on_dots() {
 fn a_group_written_as_an_array_is_not_split() {
     assert_same(
         &operation_with(r#""x-fern-sdk-group-name": ["a.b", "c"], "x-fern-sdk-method-name": "get","#),
-        &operation_with(r#""x-forge-group": ["a.b", "c"], "x-forge-method": "get","#),
+        &operation_with(r#""x-forge-group": ["a.b", "c"], "x-forge-method-name": "get","#),
     );
 }
 
@@ -65,7 +67,7 @@ fn a_group_that_is_neither_a_string_nor_an_array_is_an_error() {
 fn ignore_makes_no_method() {
     assert_same(
         &operation_with(r#""x-fern-sdk-group-name": ["a"], "x-fern-sdk-method-name": "get", "x-fern-ignore": true,"#),
-        &operation_with(r#""x-forge-group": ["a"], "x-forge-method": "get", "x-forge-ignore": true,"#),
+        &operation_with(r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-ignore": true,"#),
     );
     assert_eq!(
         parse(&operation_with(
@@ -81,7 +83,7 @@ fn ignore_makes_no_method() {
 fn ignore_set_to_false_keeps_the_method() {
     assert_same(
         &operation_with(r#""x-fern-sdk-group-name": ["a"], "x-fern-sdk-method-name": "get", "x-fern-ignore": false,"#),
-        &operation_with(r#""x-forge-group": ["a"], "x-forge-method": "get","#),
+        &operation_with(r#""x-forge-group": ["a"], "x-forge-method-name": "get","#),
     );
 }
 
@@ -89,7 +91,7 @@ fn ignore_set_to_false_keeps_the_method() {
 fn a_parameter_name_is_read_as_native() {
     let parameters = |key: &str| {
         operation_with(&format!(
-            r#""x-forge-group": ["a"], "x-forge-method": "list",
+            r#""x-forge-group": ["a"], "x-forge-method-name": "list",
               "parameters": [{{"name": "q", "in": "query", "{key}": "query", "schema": {{"type": "string"}}}}],"#
         ))
     };
@@ -149,7 +151,7 @@ fn the_keys_of_an_alias_are_read_too() {
         ),
         &alias(
             "x-forge-group",
-            "x-forge-method",
+            "x-forge-method-name",
             "x-forge-availability",
             "x-forge-ignore",
         ),
@@ -178,7 +180,7 @@ fn a_key_that_is_read_is_not_an_extension_of_the_method() {
 #[test]
 fn a_key_that_is_not_read_stays_an_extension_of_the_method() {
     let forge = parse(&operation_with(
-        r#""x-forge-group": ["a"], "x-forge-method": "get", "x-fern-audiences": ["internal"], "x-fern-pagination": {"offset": "o"},"#,
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-fern-audiences": ["internal"], "x-fern-pagination": {"offset": "o"},"#,
     ));
     let method = forge.groups().next().unwrap().methods().next().unwrap();
 
@@ -262,7 +264,7 @@ fn a_key_written_twice_is_an_error_naming_it() {
 fn the_vendor_keys_of_a_kind_of_object_are_read_only_there() {
     // A name key on an operation, or a method key on a schema, says nothing.
     let forge = parse(&operation_with(
-        r#""x-forge-group": ["a"], "x-forge-method": "get", "x-fern-property-name": "p", "x-fern-type-name": "T",
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-fern-property-name": "p", "x-fern-type-name": "T",
           "x-fern-parameter-name": "q","#,
     ));
     let method = forge.groups().next().unwrap().methods().next().unwrap();

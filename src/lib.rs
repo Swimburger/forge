@@ -253,7 +253,7 @@ pub struct Method<'f> {
 impl<'f> Method<'f> {
     /// Returns the name of the method, which is unique within its group.
     ///
-    /// Corresponds to the `x-forge-method` extension of the
+    /// Corresponds to the `x-forge-method-name` extension of the
     /// operation, or of the alias the method comes from. An operation or
     /// alias without one, or with an empty one, is not a method, and one
     /// with no letters or digits is an error. Two methods in a group with
@@ -497,7 +497,7 @@ impl<'f> Method<'f> {
     ///
     /// An extension is a key of the
     /// [Operation Object](https://spec.openapis.org/oas/latest.html#operation-object)
-    /// that starts with `x-`. Those forge reads, `x-forge-method`,
+    /// that starts with `x-`. Those forge reads, `x-forge-method-name`,
     /// `x-forge-group`, `x-forge-ignore`, `x-forge-availability`,
     /// `x-forge-hidden`, `x-forge-require-confirmation` and
     /// `x-forge-aliases`, are left out, and so are the keys the

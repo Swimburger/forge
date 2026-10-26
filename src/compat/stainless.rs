@@ -31,11 +31,12 @@ pub(super) fn schema(key: &str) -> Option<Hit<SchemaField>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::Tier;
 
     #[test]
     fn the_skip_is_read_on_a_schema_as_a_boolean_or_targets_and_not_native() {
         let hit = schema(SKIP).unwrap();
-        assert!(!hit.is_native(), "{SKIP}");
+        assert_eq!(hit.tier, Tier::Compat, "{SKIP}");
         assert!(matches!(hit.field, SchemaField::Ignore(BoolFormat::BoolOrTargets)));
     }
 

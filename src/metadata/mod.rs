@@ -21,9 +21,10 @@ use crate::Availability;
 /// [`definition`], since an alias cannot have one.
 pub(crate) const ALIASES: &str = "x-forge-aliases";
 
-/// What every native key begins with, but `x-sensitive`. A key without it is
-/// turned away before it is matched against the table: most extensions in a
-/// document are no key of any table, and this is the cheap way to say so.
+/// What every native key begins with, but the deprecated `x-sensitive`. A key
+/// without it is turned away before it is matched against the table: most
+/// extensions in a document are no key of any table, and this is the cheap
+/// way to say so.
 const PREFIX: &str = "x-forge-";
 
 /// A key that says something about the object it is on.
@@ -35,6 +36,9 @@ const PREFIX: &str = "x-forge-";
 pub(crate) struct Hit<F> {
     /// What the key says.
     pub(crate) field: F,
+    /// Which kind of key it is, which decides whose value is kept when
+    /// several keys say the same thing.
+    pub(crate) tier: Tier,
     /// The bit of the key in a set of the keys read from an object so far,
     /// which is how a key written twice is found, and the index of its name.
     /// Unique among the keys of one kind of object, native or not: the
@@ -42,14 +46,48 @@ pub(crate) struct Hit<F> {
     pub(crate) slot: u8,
 }
 
+/// Which kind of key gave a value, from the weakest to the strongest. When
+/// keys of different tiers say the same thing about an object, the value of
+/// the strongest is kept, whatever order they are written in.
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum Tier {
+    /// No key has given a value yet.
+    #[default]
+    Unset,
+    /// A key a compatibility layer reads in place of a native one.
+    #[cfg_attr(not(any(feature = "compat", test)), expect(dead_code))]
+    Compat,
+    /// A native key that is kept working under an old name, in place of
+    /// the one that replaced it.
+    Deprecated,
+    /// A native key, under its current name.
+    Native,
+}
+
 /// The first slot of the keys that are not native, so that slots never
 /// collide with the native ones, which count up from zero.
+#[cfg_attr(not(any(feature = "compat", test)), expect(dead_code))]
 pub(crate) const COMPAT_SLOTS: u8 = 32;
 
 impl<F> Hit<F> {
     /// Returns a native key, in slot `slot`, which is under 32.
     const fn native(field: F, slot: u8) -> Hit<F> {
-        Hit { field, slot }
+        Hit {
+            field,
+            tier: Tier::Native,
+            slot,
+        }
+    }
+
+    /// Returns a deprecated native key, in slot `slot`, which is under 32:
+    /// an old name of a native key, read only when the current one is not
+    /// written.
+    const fn deprecated(field: F, slot: u8) -> Hit<F> {
+        Hit {
+            field,
+            tier: Tier::Deprecated,
+            slot,
+        }
     }
 
     /// Returns a key that is not native, which a compatibility layer
@@ -59,6 +97,7 @@ impl<F> Hit<F> {
     pub(crate) const fn compat(field: F, n: u8) -> Hit<F> {
         Hit {
             field,
+            tier: Tier::Compat,
             slot: COMPAT_SLOTS + n,
         }
     }
@@ -69,14 +108,9 @@ impl<F> Hit<F> {
     pub(crate) fn after(self, n: u8) -> Hit<F> {
         Hit {
             field: self.field,
+            tier: self.tier,
             slot: self.slot + n,
         }
-    }
-
-    /// Returns whether the key is native. A value from a native key is kept
-    /// over one from any other, whatever order they are written in.
-    pub(crate) const fn is_native(&self) -> bool {
-        self.slot < COMPAT_SLOTS
     }
 }
 
@@ -157,7 +191,7 @@ pub(crate) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
         return None;
     }
     Some(match key {
-        METHOD => Hit::native(DefinitionField::Method, 0),
+        METHOD_NAME => Hit::native(DefinitionField::Method, 0),
         GROUP => Hit::native(DefinitionField::Group(GroupFormat::Array), 1),
         IGNORE => Hit::native(DefinitionField::Ignore(BoolFormat::Bool), 2),
         AVAILABILITY => Hit::native(DefinitionField::Availability, 3),
@@ -167,7 +201,7 @@ pub(crate) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
     })
 }
 
-const METHOD: &str = "x-forge-method";
+const METHOD_NAME: &str = "x-forge-method-name";
 const GROUP: &str = "x-forge-group";
 const IGNORE: &str = "x-forge-ignore";
 const AVAILABILITY: &str = "x-forge-availability";
@@ -176,15 +210,19 @@ const CONFIRMATION: &str = "x-forge-require-confirmation";
 const PARAMETER_NAME: &str = "x-forge-parameter-name";
 const MODEL_NAME: &str = "x-forge-model-name";
 const PROPERTY_NAME: &str = "x-forge-property-name";
-const SENSITIVE: &str = "x-sensitive";
+const SENSITIVE: &str = "x-forge-sensitive";
+/// The old name of `x-forge-sensitive`, from before every native key began
+/// with `x-forge-`. Deprecated: it is read only where `x-forge-sensitive` is
+/// not written.
+const DEPRECATED_SENSITIVE: &str = "x-sensitive";
 const COMMANDS: &str = "x-forge-commands";
 
 /// The names of the native keys of an operation or an alias, by slot.
-pub(crate) const DEFINITION_NAMES: [&str; 6] = [METHOD, GROUP, IGNORE, AVAILABILITY, HIDDEN, CONFIRMATION];
+pub(crate) const DEFINITION_NAMES: [&str; 6] = [METHOD_NAME, GROUP, IGNORE, AVAILABILITY, HIDDEN, CONFIRMATION];
 /// The names of the native keys of a Parameter Object, by slot.
 pub(crate) const PARAMETER_NAMES: [&str; 1] = [PARAMETER_NAME];
 /// The names of the native keys of a Schema Object, by slot.
-pub(crate) const SCHEMA_NAMES: [&str; 4] = [MODEL_NAME, PROPERTY_NAME, IGNORE, SENSITIVE];
+pub(crate) const SCHEMA_NAMES: [&str; 5] = [MODEL_NAME, PROPERTY_NAME, IGNORE, SENSITIVE, DEPRECATED_SENSITIVE];
 /// The names of the native keys of the document, by slot.
 pub(crate) const DOCUMENT_NAMES: [&str; 1] = [COMMANDS];
 
@@ -208,7 +246,7 @@ pub(crate) fn parameter(key: &str) -> Option<Hit<ParameterField>> {
 /// Returns what `key` says on a Schema Object, if it is a native key of one.
 pub(crate) fn schema(key: &str) -> Option<Hit<SchemaField>> {
     // `x-sensitive` is the one native key outside the prefix.
-    if !key.starts_with(PREFIX) && key != SENSITIVE {
+    if !key.starts_with(PREFIX) && key != DEPRECATED_SENSITIVE {
         return None;
     }
     Some(match key {
@@ -216,6 +254,7 @@ pub(crate) fn schema(key: &str) -> Option<Hit<SchemaField>> {
         PROPERTY_NAME => Hit::native(SchemaField::PropertyName, 1),
         IGNORE => Hit::native(SchemaField::Ignore(BoolFormat::Bool), 2),
         SENSITIVE => Hit::native(SchemaField::Sensitive, 3),
+        DEPRECATED_SENSITIVE => Hit::deprecated(SchemaField::Sensitive, 4),
         _ => return None,
     })
 }
@@ -253,7 +292,7 @@ mod tests {
     fn native_keys() -> [&'static [&'static str]; 4] {
         [
             &[
-                "x-forge-method",
+                "x-forge-method-name",
                 "x-forge-group",
                 "x-forge-ignore",
                 "x-forge-availability",
@@ -265,6 +304,7 @@ mod tests {
                 "x-forge-model-name",
                 "x-forge-property-name",
                 "x-forge-ignore",
+                "x-forge-sensitive",
                 "x-sensitive",
             ],
             &["x-forge-commands"],
@@ -277,7 +317,7 @@ mod tests {
     fn read_as_itself<F>(keys: &[&str], names: &[&'static str], read: fn(&str) -> Option<Hit<F>>) {
         for &key in keys {
             let hit = read(key).unwrap_or_else(|| panic!("{key} is not read"));
-            assert!(hit.is_native(), "{key}");
+            assert_ne!(hit.tier, Tier::Compat, "{key}");
             assert_eq!(native_name(names, hit.slot), Some(key));
         }
         assert_eq!(keys.len(), names.len(), "every name is a key that is read");
@@ -290,6 +330,18 @@ mod tests {
         read_as_itself(parameters, &PARAMETER_NAMES, parameter);
         read_as_itself(schemas, &SCHEMA_NAMES, schema);
         read_as_itself(documents, &DOCUMENT_NAMES, document);
+    }
+
+    #[test]
+    fn x_sensitive_is_a_deprecated_name_of_x_forge_sensitive() {
+        let (current, old) = (schema("x-forge-sensitive").unwrap(), schema("x-sensitive").unwrap());
+
+        assert!(matches!(
+            (current.field, old.field),
+            (SchemaField::Sensitive, SchemaField::Sensitive)
+        ));
+        assert_eq!((current.tier, old.tier), (Tier::Native, Tier::Deprecated));
+        assert!(Tier::Native > Tier::Deprecated && Tier::Deprecated > Tier::Compat && Tier::Compat > Tier::Unset);
     }
 
     #[test]
@@ -320,6 +372,7 @@ mod tests {
             "x-custom",
             "summary",
             "x-forge-nope",
+            "x-forge-method",
         ] {
             assert!(definition(key).is_none(), "{key}");
             assert!(parameter(key).is_none(), "{key}");

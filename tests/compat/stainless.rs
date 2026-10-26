@@ -67,7 +67,7 @@ fn a_skip_written_twice_is_an_error_naming_it() {
 #[test]
 fn a_skip_on_an_operation_says_nothing_and_stays_an_extension() {
     let forge = parse(&operation_with(
-        r#""x-forge-group": ["a"], "x-forge-method": "get", "x-stainless-skip": true,"#,
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-stainless-skip": true,"#,
     ));
     let method = forge.groups().next().unwrap().methods().next().unwrap();
 
