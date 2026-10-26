@@ -20,7 +20,7 @@ After the boundary, the engine — reader, builder, linked model, plugin host, n
 Today the engine couples to vendors in five places:
 
 1. **Wire keys** — vendor names are hardcoded in the serde key enums (`DefinitionKey`, `ParameterKey::FieldName`, `SchemaKey::{ModelName, FieldName, Skip}` in `src/link/openapi.rs`).
-2. **Vendor value formats** — Fern's dotted-or-array group strings, Fern's five-value availability vocabulary, Stainless's `x-stainless-skip` (where a list of target names means *false*).
+2. **Vendor value formats** — Fern's five-value availability vocabulary, Stainless's `x-stainless-skip` (where a list of target names means *false*).
 3. **Error strings** — validation messages name vendor keys ("`x-fern-availability "ga" is not …`").
 4. **The consumed-key set** — the seven names excluded from the plugin passthrough are hand-listed in the deserializers and re-documented in the model docs.
 5. **Documentation** — the public model, the WIT, and the JS runtime attribute primitives to vendor keys; the WIT's doc comments ship in the npm package.
@@ -68,7 +68,7 @@ Audit of the released aggregate (`openapi.forge.json`, 27.6 MB, sha `99544617…
 | Native key | Form | Meaning | Compat source (the adapter translates) |
 |---|---|---|---|
 | `x-forge-method-name` | string | the method's name | `x-fern-sdk-method-name` |
-| `x-forge-group` | **array of strings**, top level first | the group path; `[]` is meant to be the root, but is not yet (see [Known gaps](#known-gaps)) | `x-fern-sdk-group-name` (dotted string is Fern's format; the split lives in the adapter. Native has no dot syntax) |
+| `x-forge-group` | **string of names separated by dots**, or **array of strings**, top level first (array elements are not split) | the group path; `""` and `[]` are meant to be the root, but are not yet (see [Known gaps](#known-gaps)) | `x-fern-sdk-group-name` (read the same way as the native key) |
 | `x-forge-ignore` | bool, positional | operation/alias → no method; property schema → no field | `x-fern-ignore` (operation) · `x-stainless-skip` (property; a list of targets counts as `false` — inside the adapter) |
 | `x-forge-availability` | `alpha` \| `beta` \| `preview` \| `generally-available` \| `deprecated` | lifecycle stage. The values are Forge's shipped vocabulary (public enum across Rust, WIT, JS); Fern merely coincides | `x-fern-availability` |
 | `x-forge-model-name` | string | the model's name (components / `$defs` schema) | `x-fern-type-name` |
@@ -82,7 +82,8 @@ Design notes:
 
 - **Explicit position keys over one positional name key.** Fern used three name keys because its reader architecture had one visitor per OpenAPI object kind. We use explicit keys for a different, real reason: tools in the wild mangle `$ref` structure (inlining targets, dropping siblings), and when placement lies, the key name still carries the role — `x-forge-model-name` on a property schema can be ignored or flagged, where a positional `x-forge-name` would silently become a field name. Explicitness here is corruption-detection, not verbosity.
 - **One exclusion word, two positions.** "Excluded from generated surfaces" is one concept at two scopes; two words (`ignore` + `skip`) would be a memory tax for no disambiguation, and `skip` is Stainless's word.
-- **Arrays for groups.** JSON's native way to write a path. Accepting dotted strings natively would permanently import Fern's format into the native vocabulary; array-only now keeps the option to loosen later (the reverse — tightening later — would break specs). Fern's dotted strings keep working through the adapter for as long as Fern keys do.
+- **Groups as a dotted string or an array.** The dotted string is how Cloudflare's specs write a group path today, and Forge CI's lint requires it, so moving a team to `x-forge-group` is a rename of the key, with the value unchanged. The array is JSON's own way to write a path, and the way to write a group name that has a dot in it. Both are read exactly as forge has always read groups.
+- **The dotted string is Cloudflare's, not Fern's.** Fern reads a string `x-fern-sdk-group-name` as *one* group (`"a.b"` is a group named `a.b`) and an array as a path; it never splits on dots. The release pipeline converts Cloudflare's dotted strings to arrays before Fern sees them (the released aggregate has 3,591 arrays and no strings). Forge has always split them, and the adapter reads the Fern key the same way as the native one, so for a string with a dot the adapter and Fern disagree. That is deliberate: the specs forge reads write Fern's key in Cloudflare's convention, and reading the two keys alike keeps a key rename from changing a value's meaning.
 - **Every native key begins with `x-forge-`.** The `-name` keys (`method-name`, `model-name`, `property-name`, `parameter-name`) say the same kind of thing and are spelled alike. `x-sensitive` predates the rule; it becomes `x-forge-sensitive`, and the old name stays readable as a deprecated alias (155 production uses), so no spec breaks. A deprecated alias is part of the native vocabulary, not of the compatibility layer: it keeps working with compat off, and deleting compat does not remove it.
 - **No misplacement validation in v1.** A known native key in a wrong position is silently ignored, exactly as Fern's keys are today. Adding validation later is a pure tightening that breaks no valid spec.
 
@@ -93,7 +94,7 @@ Design notes:
 3. **Same key twice** → error (today's `duplicate field` behavior, unchanged).
 4. **Empty or punctuation-only values** behave as today, which depends on the key:
    - `x-forge-property-name`, `x-forge-parameter-name` and `x-forge-model-name`: a value with no letters or digits, empty included, is ignored, and the field or model is named after its wire name (the property, parameter or schema name).
-   - `x-forge-method-name` and `x-forge-group`: an empty method name, or an empty group path (`[]`, or Fern's `""`), means the operation or alias is not a method. For `[]` this is the current behavior, not the intended one: see [Known gaps](#known-gaps). A method name, or any group name in the path, that is not empty but has no letters or digits is an error.
+   - `x-forge-method-name` and `x-forge-group`: an empty method name, or an empty group path (`""` or `[]`), means the operation or alias is not a method. For the empty group path this is the current behavior, not the intended one: see [Known gaps](#known-gaps). A method name, or any group name in the path, that is not empty but has no letters or digits is an error.
    - Validation errors name the key the author actually wrote (provenance), so existing Fern-keyed error expectations hold.
 5. **Dual-writing** (native and compat keys carrying the same value) is the supported pattern for keeping specs portable across engine versions during the transition: old engines read the compat key, new engines apply native.
 
@@ -101,11 +102,11 @@ Design notes:
 
 ### An empty group path
 
-- **Intended:** `x-forge-group: []` attaches the method to the root, in no group. An operation without `x-forge-group` at all is still not a method.
-- **Today:** `[]` makes no method, exactly like a missing key. `add_method` in `src/link.rs` returns before building the method when the path is empty; `Method::group`'s docs in `src/lib.rs` say so; and `tests/parse/groups.rs::empty_group_name_is_no_group` and the empty-group alias case in `tests/parse/aliases.rs` assert it.
+- **Intended:** `x-forge-group: []` (or `""`) attaches the method to the root, in no group. An operation without `x-forge-group` at all is still not a method.
+- **Today:** an empty group path makes no method, exactly like a missing key. `add_method` in `src/link.rs` returns before building the method when the path is empty; `Method::group`'s docs in `src/lib.rs` say so; and `tests/parse/groups.rs::empty_group_name_is_no_group` and the empty-group alias case in `tests/parse/aliases.rs` assert it.
 - **Why it is not fixed here:** the model has no place for a root method. Methods exist only inside groups (`Forge::groups` → `Group::methods`); `Forge` has top-level models but no top-level methods, and neither does the WIT. The fix needs a root method list in the model, a way for plugins to read it (a new WIT function is additive; a new field in an existing record is not), and generators that render root methods. That is beyond FORGE-1, which leaves the model unchanged.
 - **Impact:** none today. The released aggregate has no empty group path and no method name without a group, so the fix will not change its output.
-- **To decide with the fix:** whether Fern's empty string (`x-fern-sdk-group-name: ""`) should also mean the root, or keep meaning "not a method" in the compatibility layer.
+- **To decide with the fix:** whether an empty `x-fern-sdk-group-name` (`""` or `[]`) should also mean the root, or keep meaning "not a method" in the compatibility layer. Fern itself puts a method with no group, or an empty array, at the root of the client, so meaning the root would bring the adapter closer to Fern.
 
 ## Architecture
 
@@ -124,8 +125,8 @@ src/
 │  │              errors. The only things link imports from here.
 │  │              The designed end state: delete this folder + the feature.
 │  ├─ fern.rs      every x-fern-* literal, mapped onto metadata's primitives;
-│  │               Fern's value formats, as data (e.g. "a string splits on
-│  │               dots"); Fern unit tests.
+│  │               the value formats of those keys, as data; Fern unit
+│  │               tests.
 │  └─ stainless.rs the x-stainless-skip mapping and its format-as-data
 │                  (a list of targets counts as false); unit tests.
 └─ link/
@@ -143,7 +144,7 @@ Properties, all deliberate:
 - **Purity**: the library's contract is `&str` keys in and small values out: primitives, key names, and *format descriptors as data* (for example "a string splits on `.`" or "a list of targets counts as `false`"). The serde reading and the arena writes stay in `link` and are generic, driven by those descriptors. This is what makes the library pluggable, standalone-consumable (a future `forge-ci validate` needs the key table, not the engine), and mechanically liftable into a real separate crate when the first standalone consumer appears (FORGE-5's work).
 - **The availability vocabulary is native.** The five values live in the native table (they are shipped public API); `fern.rs` only maps `x-fern-availability` onto that primitive.
 - **Deletion is the designed end state.** `cargo build --no-default-features --features cli` proves the native vocabulary stands alone. When vendor keys reach end-of-life, deleting the layer means removing `src/compat/` and `tests/compat/`, `mod compat` in `src/lib.rs`, the `compat` cfg arms in `link/resolve.rs` (a resolver and a name lookup for each kind of object the layer reads: operations and aliases, parameters, schemas), and the `compat` feature and its `[[test]]` entry in `Cargo.toml`. No `x-forge-*` extension changes, in behavior, docs, or WIT.
-  - *What a deletion leaves behind.* Some native-side code exists only for the layer and compiles, unused, without it: `Hit::compat` and `Hit::after`, `Tier::Compat`, `COMPAT_SLOTS`, the value formats only vendors use (`GroupFormat::StringOrArray`, `BoolFormat::BoolOrTargets`) and their readers in `link/openapi.rs`, and the sentence in `Method::extensions`'s docs about the keys the compatibility layer reads. Removing them is a mechanical follow-on step, not a prerequisite.
+  - *What a deletion leaves behind.* Some native-side code exists only for the layer and compiles, unused, without it: `Hit::compat` and `Hit::after`, `Tier::Compat`, `COMPAT_SLOTS`, the value format only a vendor uses (`BoolFormat::BoolOrTargets`) and its reader in `link/openapi.rs`, and the sentence in `Method::extensions`'s docs about the keys the compatibility layer reads. Removing them is a mechanical follow-on step, not a prerequisite.
 - **With compat off, vendor keys are ordinary extensions.** Built without the feature, the engine does not drop `x-fern-*` and `x-stainless-*` keys: like any other `x-` key it does not read, an operation's vendor keys are kept and given to plugins by `Method::extensions`. Native behavior is the same either way; what plugins see in `extensions()` is not.
 - **Dispatch, not semantics**: the layer maps keys to primitives and normalizes simple values. Structural behavior — `x-forge-aliases` becoming methods, `x-forge-commands` describing groups — stays in the builder.
 
@@ -156,7 +157,7 @@ Properties, all deliberate:
 ## Test plan
 
 - `tests/parse/` — every fixture rewrites to native keys. Not find-and-replace: group values `"a.b"` become `["a","b"]`; the three Fern name keys become their explicit native keys; error assertions naming Fern keys move out.
-- `tests/compat/` — the vendor suite, mirroring `tests/parse`'s harness: for each primitive, parse(Fern-keyed fixture) == parse(native-keyed fixture); Fern format specifics (dotted vs array groups, duplicate-key errors, provenance error strings, Stainless's skip-list semantics).
+- `tests/compat/` — the vendor suite, mirroring `tests/parse`'s harness: for each primitive, parse(Fern-keyed fixture) == parse(native-keyed fixture); format specifics (dotted vs array groups, duplicate-key errors, provenance error strings, Stainless's skip-list semantics).
 - `tests/boundary.rs` — the guard.
 - Existing tripwires keep working: `wit_is_current` (WIT regeneration is mechanical via `wit.mjs`), the wasm dump equality, native-vs-wasm generated-output byte equality.
 - Performance: divan parse benches before/after on the real aggregate (`FORGE_SPEC`); `tests/wasm.rs::bench` re-run; forge-bench re-pinned upstream after merge.
@@ -185,7 +186,8 @@ Non-breaking. `x-sensitive` keeps working, deprecated in favor of `x-forge-sensi
 - **Vendor-trait machinery** (a `Vendor` trait with Fern/Stainless/Scalar impls): no primitive overlaps across vendors today; the key table grows rows when one does. Rejected as over-engineering for now.
 - **One positional `x-forge-name`**: mirrors the model's single `Name` concept and is cleaner in the abstract — but when toolchains inline `$ref` targets, the model's name key rides into property positions and silently renames fields. Explicit keys turn that corruption into something ignorable or flaggable. Rejected on robustness.
 - **Separate `x-forge-skip` for properties**: two words for one concept, and `skip` is Stainless's word. Rejected.
-- **Accepting dotted group strings natively**: ergonomic continuity, but it permanently imports Fern's format into the native vocabulary; array-only now is the reversible choice. Rejected.
+- **Arrays only for `x-forge-group`**: one form, which every tool reads the same way, and loosening later would break nothing. Rejected: Cloudflare's specs write dotted strings, so every migration would reshape values as well as rename keys, and Forge CI's lint would need an array rule.
+- **Reading a string `x-fern-sdk-group-name` as one group, as Fern does**: faithful to Fern, but the native and Fern keys would then read the same value differently, and the specs forge reads use dots. Rejected.
 - **Error on native/compat disagreement**: the strictest conflict rule, and consistent with the engine's general strictness — deferred as an open question in FORGE-4 in favor of silent native-wins (zero comparison machinery, no cost for correct specs; the drift risk is documented).
 - **Full crate split now** (a separate `metadata` member crate): delivers "separate library" literally today. The root `Cargo.toml` is already a `[workspace]`, so adding a member does not mean moving the engine; the real cost is that a separate crate cannot depend on the engine, so `Availability` and the other primitive value types would move into it and be re-exported by `forge`. Deferred: the pure contract keeps that move mechanical for when the first standalone consumer exists.
 - **Renaming `Group`/`Availability` now**: both are Fern-inherited words, but both renames break the plugin contract. Deferred to FORGE-3's single breaking wave.

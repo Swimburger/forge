@@ -28,9 +28,7 @@ use super::resolve;
 use crate::Name;
 use crate::arena::{Id, List, Span, Str, Strings};
 use crate::json::{self, Json};
-use crate::metadata::{
-    self, BoolFormat, DefinitionField, DocumentField, GroupFormat, Hit, ParameterField, SchemaField, Tier,
-};
+use crate::metadata::{self, BoolFormat, DefinitionField, DocumentField, Hit, ParameterField, SchemaField, Tier};
 
 /// An OpenAPI document: the fields of the OpenAPI Object at its root, and
 /// the arenas of the objects in it.
@@ -896,36 +894,29 @@ impl Read for Types {
     }
 }
 
-/// What reads a group path into a `Doc`, in the format it is written in:
-/// an array of strings, which are not split, and, if the format says so, a
-/// string split on its separator, where the empty string is no group.
-struct GroupNames<'a>(&'a mut Doc, GroupFormat);
+/// Reads a group path: a string split on dots, or an array of strings that
+/// are not split. The empty string is no group.
+struct GroupNames;
 
-impl<'de> DeserializeSeed<'de> for GroupNames<'_> {
-    type Value = Span<Str>;
+impl Read for GroupNames {
+    type Out = Span<Str>;
 
-    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Span<Str>, D::Error> {
-        struct GroupNamesVisitor<'a>(&'a mut Doc, GroupFormat);
+    fn read<'de, D: Deserializer<'de>>(doc: &mut Doc, deserializer: D) -> Result<Span<Str>, D::Error> {
+        struct GroupNamesVisitor<'a>(&'a mut Doc);
 
         impl<'de> Visitor<'de> for GroupNamesVisitor<'_> {
             type Value = Span<Str>;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                match self.1 {
-                    GroupFormat::Array => f.write_str("an array of strings"),
-                    GroupFormat::StringOrArray { .. } => f.write_str("a string or an array of strings"),
-                }
+                f.write_str("a string or an array of strings")
             }
 
             fn visit_str<E: de::Error>(self, v: &str) -> Result<Span<Str>, E> {
-                let GroupFormat::StringOrArray { separator } = self.1 else {
-                    return Err(E::invalid_type(de::Unexpected::Str(v), &self));
-                };
                 if v.is_empty() {
                     return Ok(Span::default());
                 }
                 let doc = self.0;
-                Ok(doc.strings.push_split(v, separator, &mut doc.str_lists))
+                Ok(doc.strings.push_split(v, '.', &mut doc.str_lists))
             }
 
             fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Span<Str>, A::Error> {
@@ -934,7 +925,7 @@ impl<'de> DeserializeSeed<'de> for GroupNames<'_> {
             }
         }
 
-        deserializer.deserialize_any(GroupNamesVisitor(self.0, self.1))
+        deserializer.deserialize_any(GroupNamesVisitor(doc))
     }
 }
 
@@ -1312,8 +1303,8 @@ impl Definition {
                 let name = map.next_value_seed(seed::<ReadStr>(doc))?;
                 self.method_name.set(&hit, name);
             }
-            DefinitionField::Group(format) => {
-                let names = map.next_value_seed(GroupNames(doc, format))?;
+            DefinitionField::Group => {
+                let names = map.next_value_seed(seed::<GroupNames>(doc))?;
                 self.group_names.set(&hit, names);
             }
             DefinitionField::Ignore(format) => {

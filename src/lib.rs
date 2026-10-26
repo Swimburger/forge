@@ -265,11 +265,12 @@ impl<'f> Method<'f> {
     /// Returns the group the method is in.
     ///
     /// Corresponds to the `x-forge-group` extension of the operation, or
-    /// of the alias the method comes from: an array with one group name per
-    /// element, top level first, such as `[accounts, members]`. An
-    /// operation or alias without one, with an empty one, or with
-    /// `x-forge-ignore: true` is not a method. A group name with no letters
-    /// or digits is an error.
+    /// of the alias the method comes from: a string of group names
+    /// separated by dots, such as `accounts.members`, or an array with one
+    /// group name per element, top level first, whose elements are not
+    /// split. An operation or alias without one, with an empty one, or
+    /// with `x-forge-ignore: true` is not a method. A group name with no
+    /// letters or digits is an error.
     pub fn group(self) -> Group<'f> {
         self.forge.group(self.data().group)
     }

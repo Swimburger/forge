@@ -3,17 +3,22 @@
 //! | Key | Says | Format |
 //! |---|---|---|
 //! | `x-fern-sdk-method-name` | the name of the method | a string |
-//! | `x-fern-sdk-group-name` | the group path of the method | an array of group names, or one string of them separated by dots |
+//! | `x-fern-sdk-group-name` | the group path of the method | as `x-forge-group`: an array of group names, or one string of them separated by dots |
 //! | `x-fern-ignore` | the definition makes no method | a boolean |
 //! | `x-fern-availability` | the stage of the API | a string, one of the native spellings |
 //! | `x-fern-parameter-name` | the name of a parameter's field | a string |
 //! | `x-fern-property-name` | the name of a property's field | a string |
 //! | `x-fern-type-name` | the name of a model | a string |
 //!
+//! A group path written as one string is split on dots, as for
+//! `x-forge-group`, which Fern itself does not do: Fern reads a string as a
+//! single group. A document written for Fern uses the array, which means the
+//! same in both.
+//!
 //! Its other extensions, such as `x-fern-enum` and `x-fern-audiences`, are
 //! not read: they say things forge has no primitive for.
 
-use crate::metadata::{BoolFormat, DefinitionField, GroupFormat, Hit, ParameterField, SchemaField};
+use crate::metadata::{BoolFormat, DefinitionField, Hit, ParameterField, SchemaField};
 
 /// What every key of the adapter begins with. A key without it is turned
 /// away before it is matched against the table.
@@ -39,7 +44,7 @@ pub(super) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
     }
     Some(match key {
         METHOD_NAME => Hit::compat(DefinitionField::Method, 0),
-        GROUP_NAME => Hit::compat(DefinitionField::Group(GroupFormat::StringOrArray { separator: '.' }), 1),
+        GROUP_NAME => Hit::compat(DefinitionField::Group, 1),
         IGNORE => Hit::compat(DefinitionField::Ignore(BoolFormat::Bool), 2),
         AVAILABILITY => Hit::compat(DefinitionField::Availability, 3),
         _ => return None,
@@ -108,12 +113,9 @@ mod tests {
     }
 
     #[test]
-    fn the_group_is_a_string_split_on_dots_or_an_array() {
+    fn the_group_is_read_as_the_native_group() {
         let hit = definition(GROUP_NAME).unwrap();
-        assert!(matches!(
-            hit.field,
-            DefinitionField::Group(GroupFormat::StringOrArray { separator: '.' })
-        ));
+        assert!(matches!(hit.field, DefinitionField::Group));
     }
 
     #[test]

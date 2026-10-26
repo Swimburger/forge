@@ -29,11 +29,13 @@ fn every_availability_is_read() {
     }
 }
 
+/// As `x-forge-group` reads it, which Fern does not: Fern reads the string
+/// as one group.
 #[test]
 fn a_group_written_as_a_string_is_split_on_dots() {
     assert_same(
         &operation_with(r#""x-fern-sdk-group-name": "a.b.c", "x-fern-sdk-method-name": "get","#),
-        &operation_with(r#""x-forge-group": ["a", "b", "c"], "x-forge-method-name": "get","#),
+        &operation_with(r#""x-forge-group": "a.b.c", "x-forge-method-name": "get","#),
     );
 }
 

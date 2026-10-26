@@ -124,8 +124,10 @@ pub(crate) fn native_name(names: &[&'static str], slot: u8) -> Option<&'static s
 pub(crate) enum DefinitionField {
     /// The name of the method.
     Method,
-    /// The group path of the method.
-    Group(GroupFormat),
+    /// The group path of the method: an array of group names, top level
+    /// first, or one string of them separated by dots. The empty string is
+    /// no group.
+    Group,
     /// Whether the definition makes no method.
     Ignore(BoolFormat),
     /// The stage of the API the method is in.
@@ -163,17 +165,6 @@ pub(crate) enum DocumentField {
     Commands,
 }
 
-/// How the value of a group path is written.
-#[derive(Clone, Copy)]
-pub(crate) enum GroupFormat {
-    /// An array of group names, top level first.
-    Array,
-    /// An array of group names, or one string of them separated by
-    /// `separator`. The empty string is no group.
-    #[cfg_attr(not(feature = "compat"), expect(dead_code))]
-    StringOrArray { separator: char },
-}
-
 /// How the value of a boolean is written.
 #[derive(Clone, Copy)]
 pub(crate) enum BoolFormat {
@@ -192,7 +183,7 @@ pub(crate) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
     }
     Some(match key {
         METHOD_NAME => Hit::native(DefinitionField::Method, 0),
-        GROUP => Hit::native(DefinitionField::Group(GroupFormat::Array), 1),
+        GROUP => Hit::native(DefinitionField::Group, 1),
         IGNORE => Hit::native(DefinitionField::Ignore(BoolFormat::Bool), 2),
         AVAILABILITY => Hit::native(DefinitionField::Availability, 3),
         HIDDEN => Hit::native(DefinitionField::Hidden, 4),

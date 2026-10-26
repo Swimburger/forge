@@ -182,12 +182,12 @@ fn a_native_key_written_twice_is_an_error_naming_it() {
 }
 
 #[test]
-fn a_native_group_written_as_a_string_is_an_error() {
-    let err = parse_err(&operation_with(
-        r#""x-forge-group": "a.b", "x-forge-method-name": "get","#,
-    ));
-
-    assert!(err.contains("an array of strings"), "{err}");
+fn the_native_group_written_as_a_string_wins() {
+    native_wins(
+        r#""x-forge-method-name": "get", "x-forge-group": "native.group","#,
+        r#""x-fern-sdk-group-name": ["vendor"],"#,
+        r#""x-forge-method-name": "get", "x-forge-group": ["native", "group"],"#,
+    );
 }
 
 #[test]

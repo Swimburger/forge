@@ -7,13 +7,26 @@ fn string_group_name_splits_on_dots() {
     let forge = parse(
         r#"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"get": {"x-forge-group": ["accounts", "members"], "x-forge-method-name": "list",
+          "paths": {"/a": {"get": {"x-forge-group": "accounts.members", "x-forge-method-name": "list",
             "responses": {"204": {"description": "ok"}}}}}
         }"#,
     );
 
     let members = group(&forge, "accounts.members");
     assert_eq!(members.parent(), Some(group(&forge, "accounts")));
+}
+
+#[test]
+fn group_name_that_is_neither_a_string_nor_an_array_is_an_error() {
+    let err = parse_err(
+        r#"{
+          "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
+          "paths": {"/a": {"get": {"x-forge-group": 1, "x-forge-method-name": "list",
+            "responses": {"204": {"description": "ok"}}}}}
+        }"#,
+    );
+
+    assert!(err.contains("a string or an array of strings"), "{err}");
 }
 
 #[test]
@@ -99,15 +112,17 @@ fn operation_without_a_group_is_not_a_method() {
 
 #[test]
 fn empty_group_name_is_no_group() {
-    let forge = parse(
-        r#"{
-          "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"get": {"x-forge-group": [], "x-forge-method-name": "get",
-            "responses": {"204": {"description": "ok"}}}}}
-        }"#,
-    );
+    for group in [r#""""#, "[]"] {
+        let forge = parse(&format!(
+            r#"{{
+              "openapi": "3.0.3", "info": {{"title": "t", "version": "1"}},
+              "paths": {{"/a": {{"get": {{"x-forge-group": {group}, "x-forge-method-name": "get",
+                "responses": {{"204": {{"description": "ok"}}}}}}}}}}
+            }}"#
+        ));
 
-    assert_eq!(forge.groups().count(), 0);
+        assert_eq!(forge.groups().count(), 0, "{group}");
+    }
 }
 
 #[test]
@@ -156,15 +171,17 @@ fn ignored_operation_is_not_a_method() {
 
 #[test]
 fn group_name_without_letters_is_an_error() {
-    let err = parse_err(
-        r#"{
-          "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"get": {"x-forge-group": ["accounts", "", "members"], "x-forge-method-name": "list",
-            "responses": {"204": {"description": "ok"}}}}}
-        }"#,
-    );
+    for group in [r#"["accounts", "", "members"]"#, r#""accounts..members""#] {
+        let err = parse_err(&format!(
+            r#"{{
+              "openapi": "3.0.3", "info": {{"title": "t", "version": "1"}},
+              "paths": {{"/a": {{"get": {{"x-forge-group": {group}, "x-forge-method-name": "list",
+                "responses": {{"204": {{"description": "ok"}}}}}}}}}}
+            }}"#
+        ));
 
-    assert!(err.contains("GET /a"), "{err}");
+        assert!(err.contains("GET /a: x-forge-group has a group name"), "{group}: {err}");
+    }
 }
 
 #[test]
