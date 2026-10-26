@@ -59,7 +59,8 @@ Audit of the released aggregate (`openapi.forge.json`, 27.6 MB, sha `99544617…
 - Operation ID prefixing.
 - Renaming Fern→Forge across the cf codebase (existing follow-up).
 - Dotted `operationId` derivation (`a.b.c.d` → group `[a,b,c]` + method `d`) — a follow-up that will land *in this layer* behind an opt-in flag.
-- New primitives for `x-fern-enum` (enum-value names — needs a model primitive that does not exist yet), `x-fern-audiences` (a visibility concept Forge has not designed), `x-stability`, `x-forge-sunset`, `x-stainless-deprecation-message`. These are flagged (FORGE-5) and stay unread; each would be a one-row additive addition later.
+- Audiences. The ticket lists audiences as a lower-priority primitive; this RFC deliberately leaves `x-fern-audiences` unread (it needs a visibility concept Forge has not designed), flagged by FORGE-5. This is a scope deviation from the ticket text and needs the reviewers' agreement.
+- New primitives for `x-fern-enum` (enum-value names — needs a model primitive that does not exist yet), `x-stability`, `x-forge-sunset`, `x-stainless-deprecation-message`. These are flagged (FORGE-5) and stay unread; each would be a one-row additive addition later.
 - Treating the `fern-forge` docs package's own `x-fern-*` reading (a downstream consumer, like cf) — follow-up.
 
 ## The native vocabulary
@@ -85,7 +86,7 @@ Design notes:
 ## Resolution rules
 
 1. **Native applied, compat fallback** — per primitive, independently (a spec mid-migration may take the group from native and availability from Fern).
-2. **Silent native-wins** — when both a native key and a compat key are present, the compat value is ignored without comparison machinery. Consequence, to be documented in the metadata docs: a stale compat key silently diverges, and editing the compat key when a native key is present appears to do nothing.
+2. **Silent native-wins** — when both a native key and a compat key are present, the compat value is ignored without comparison machinery. Only the winning value is validated: an invalid compat `availability` does not error when a native one wins. A value of the wrong JSON type (a number where a string is expected) is still a document-shape error at read time, whichever key it is on and in whatever order the keys are written, so errors never depend on key order. Consequence, to be documented in the metadata docs: a stale compat key silently diverges, and editing the compat key when a native key is present appears to do nothing.
 3. **Same key twice** → error (today's `duplicate field` behavior, unchanged).
 4. **Empty or punctuation-only values** fall back to the positional wire name, as today; validation errors name the key the author actually wrote (provenance), so existing Fern-keyed error expectations hold.
 5. **Dual-writing** (native and compat keys carrying the same value) is the supported pattern for keeping specs portable across engine versions during the transition: old engines read the compat key, new engines apply native.
@@ -95,32 +96,39 @@ Design notes:
 ```
 src/
 ├─ metadata/      THE NATIVE LIBRARY — pure
-│   │             The x-forge-* table, the resolve() entry (native first),
-│   │             pure value readers, the consumed-key set.
-│   │             Never references compat. No serde, no arena coupling:
-│   │             its inputs are &str keys and small pure values.
+│   │             The x-forge-* table (per kind of object: definition,
+│   │             parameter, schema, document), the primitives and format
+│   │             descriptors, the availability vocabulary, the consumed-key
+│   │             set. Imports neither compat nor link. No serde, no arena
+│   │             coupling: its inputs are &str keys, its outputs small
+│   │             pure values.
 ├─ compat/         THE COMPATIBILITY LAYER — feature "compat" (default on)
-│  ├─ mod.rs      the aggregator; its only pub(crate) item is resolve().
+│  ├─ mod.rs      the aggregator: one resolver per kind of object, trying
+│  │              each vendor in turn. The only thing link imports from here.
 │  │              The designed end state: delete this folder + the feature.
-│  ├─ fern.rs      every x-fern-* literal; Fern formats (dotted group
-│  │               split, availability vocabulary); Fern unit tests.
-│  └─ stainless.rs the x-stainless-skip reader; its unit tests.
+│  ├─ fern.rs      every x-fern-* literal, mapped onto metadata's primitives;
+│  │               Fern's value formats, as data (e.g. "a string splits on
+│  │               dots"); Fern unit tests.
+│  └─ stainless.rs the x-stainless-skip mapping and its format-as-data
+│                  (a list of targets counts as false); unit tests.
 └─ link/
-   ├─ openapi.rs  OpenAPI's own keys only; every x- key asks metadata.
-   └─ read.rs     serde helpers; the keys! macro hoisted to crate
-                  visibility, since the library sits beside link/.
+   ├─ resolve.rs  the orchestrator: native first, then compat behind
+   │              #[cfg(feature = "compat")] — the only cfg point.
+   ├─ openapi.rs  OpenAPI's own keys only; every x- key asks resolve.rs.
+   └─ read.rs     serde helpers, as today.
 ```
 
 Properties, all deliberate:
 
-- **One-way dependencies**: `link → metadata → compat`, and nothing else imports compat. The reader asks native first, compat second — the fallback arm *is* the D4 rule.
-- **Purity**: the library's contract is `&str` keys and small values (`Vec` of group names, an availability enum, bools). All serde wiring and arena writes stay in `link`. This is what makes the library pluggable, standalone-consumable (a future `forge-ci validate` needs the key table, not the engine), and mechanically liftable into a real separate crate when the first standalone consumer appears (FORGE-5's work).
-- **Deletion is the designed end state.** `cargo build --no-default-features` proves the native vocabulary stands alone; when vendor keys reach end-of-life, deleting `compat/` touches nothing else — no `x-forge-*` extension changes, in behavior, docs, or WIT.
+- **Dependencies**: `link → metadata` and `link → compat` (behind the feature), and `compat → metadata` (an adapter produces metadata's primitives). `metadata` imports neither of the others, so compat sits *beside* the native table rather than under it. `link/resolve.rs` asks native first, compat second — that fallback arm *is* the D4 rule.
+- **Purity**: the library's contract is `&str` keys in and small values out: primitives, key names, and *format descriptors as data* (for example "a string splits on `.`" or "a list of targets counts as `false`"). The serde reading and the arena writes stay in `link` and are generic, driven by those descriptors. This is what makes the library pluggable, standalone-consumable (a future `forge-ci validate` needs the key table, not the engine), and mechanically liftable into a real separate crate when the first standalone consumer appears (FORGE-5's work).
+- **The availability vocabulary is native.** The five values live in the native table (they are shipped public API); `fern.rs` only maps `x-fern-availability` onto that primitive.
+- **Deletion is the designed end state.** `cargo build --no-default-features --features cli` proves the native vocabulary stands alone; when vendor keys reach end-of-life, deleting `compat/` and the one cfg arm in `link/resolve.rs` touches nothing else — no `x-forge-*` extension changes, in behavior, docs, or WIT.
 - **Dispatch, not semantics**: the layer maps keys to primitives and normalizes simple values. Structural behavior — `x-forge-aliases` becoming methods, `x-forge-commands` describing groups — stays in the builder.
 
 ## Enforcement
 
-- **Structural boundary — compiler-enforced (built-in Rust):** every vendor key constant is private to its adapter; the only thing outside `compat/` that can touch vendor knowledge is the aggregator's `resolve()`, which the reader calls. The feature gate makes compat removable, and `--no-default-features` CI builds keep proving it.
+- **Structural boundary — compiler-enforced (built-in Rust):** every vendor key literal is private to its adapter; the only thing outside `compat/` that can touch vendor knowledge is the aggregator's per-object resolvers, which `link/resolve.rs` calls. The feature gate makes compat removable, and builds without the `compat` feature keep proving it.
 - **Textual boundary — `tests/boundary.rs`:** scans `src/`, `tests/`, and `packages/forge/` (including the shipped `plugin/forge.wit`) for `x-fern` / `x-stainless` outside `src/compat/` and `tests/compat/`. Doc comments count — moving the WIT's "from `x-fern-availability`" attribution to `x-forge-availability` is part of the work. The test runs wherever `cargo test` runs; a `just boundary` alias targets it.
 - **Criterion mapping:** (1) nothing outside the layer references `x-fern-*` → the two mechanisms above; (2) output unchanged → zero model-shape changes, Fern-keyed specs resolve identically (equivalence tests + the full-aggregate native-vs-wasm byte-equality bench); (3) tests per primitive → below.
 
@@ -144,7 +152,7 @@ Non-breaking. The WIT changes are doc comments only — `forge:plugin@0.3.0` sta
 - **Separate `x-forge-skip` for properties**: two words for one concept, and `skip` is Stainless's word. Rejected.
 - **Accepting dotted group strings natively**: ergonomic continuity, but it permanently imports Fern's format into the native vocabulary; array-only now is the reversible choice. Rejected.
 - **Error on native/compat disagreement**: the strictest conflict rule, and consistent with the engine's general strictness — deferred as an open question in FORGE-4 in favor of silent native-wins (zero comparison machinery, no cost for correct specs; the drift risk is documented).
-- **Full crate split now** (workspace with a separate metadata crate): delivers "separate library" literally today at the cost of restructuring the OSS repo mid-beta and moving `Availability` into the library. Deferred: the pure contract makes the split a `git mv` when the first standalone consumer exists.
+- **Full crate split now** (a separate `metadata` member crate): delivers "separate library" literally today. The root `Cargo.toml` is already a `[workspace]`, so adding a member does not mean moving the engine; the real cost is that a separate crate cannot depend on the engine, so `Availability` and the other primitive value types would move into it and be re-exported by `forge`. Deferred: the pure contract keeps that move mechanical for when the first standalone consumer exists.
 - **Renaming `Group`/`Availability` now**: both are Fern-inherited words, but both renames break the plugin contract. Deferred to FORGE-3's single breaking wave.
 
 ## Follow-ups
