@@ -91,7 +91,10 @@ Design notes:
 1. **Native applied, compat fallback** — per primitive, independently (a spec mid-migration may take the group from native and availability from Fern). Keys rank in three tiers: a native key under its current name, then a deprecated native alias (`x-sensitive`), then a compat key. The strongest tier present wins.
 2. **Silent native-wins** — when keys of two tiers are present (a native key and a deprecated alias or compat key), the weaker value is ignored without comparison machinery. Only the winning value is validated: an invalid compat `availability` does not error when a native one wins. A value of the wrong JSON type (a number where a string is expected) is still a document-shape error at read time, whichever key it is on and in whatever order the keys are written, so errors never depend on key order. Consequence, to be documented in the metadata docs: a stale compat key silently diverges, and editing the compat key when a native key is present appears to do nothing.
 3. **Same key twice** → error (today's `duplicate field` behavior, unchanged).
-4. **Empty or punctuation-only values** fall back to the positional wire name, as today; validation errors name the key the author actually wrote (provenance), so existing Fern-keyed error expectations hold.
+4. **Empty or punctuation-only values** behave as today, which depends on the key:
+   - `x-forge-property-name`, `x-forge-parameter-name` and `x-forge-model-name`: a value with no letters or digits, empty included, is ignored, and the field or model is named after its wire name (the property, parameter or schema name).
+   - `x-forge-method-name` and `x-forge-group`: an empty method name, or an empty group path (`[]`, or Fern's `""`), means the operation or alias is not a method. A method name, or any group name in the path, that is not empty but has no letters or digits is an error.
+   - Validation errors name the key the author actually wrote (provenance), so existing Fern-keyed error expectations hold.
 5. **Dual-writing** (native and compat keys carrying the same value) is the supported pattern for keeping specs portable across engine versions during the transition: old engines read the compat key, new engines apply native.
 
 ## Architecture
@@ -123,7 +126,7 @@ src/
 
 Properties, all deliberate:
 
-- **Dependencies**: `link → metadata` and `link → compat` (behind the feature), and `compat → metadata` (an adapter produces metadata's primitives). `metadata` imports neither of the others, so compat sits *beside* the native table rather than under it. `link/resolve.rs` asks native first, compat second — that fallback arm *is* the D4 rule.
+- **Dependencies**: `link → metadata` and `link → compat` (behind the feature), and `compat → metadata` (an adapter produces metadata's primitives). `metadata` imports neither of the others, so compat sits *beside* the native table rather than under it. `link/resolve.rs` asks native first, compat second — that fallback arm *is* resolution rule 2.
 - **Purity**: the library's contract is `&str` keys in and small values out: primitives, key names, and *format descriptors as data* (for example "a string splits on `.`" or "a list of targets counts as `false`"). The serde reading and the arena writes stay in `link` and are generic, driven by those descriptors. This is what makes the library pluggable, standalone-consumable (a future `forge-ci validate` needs the key table, not the engine), and mechanically liftable into a real separate crate when the first standalone consumer appears (FORGE-5's work).
 - **The availability vocabulary is native.** The five values live in the native table (they are shipped public API); `fern.rs` only maps `x-fern-availability` onto that primitive.
 - **Deletion is the designed end state.** `cargo build --no-default-features --features cli` proves the native vocabulary stands alone; when vendor keys reach end-of-life, deleting `compat/` and the cfg arms in `link/resolve.rs` (one for each kind of object) touches nothing else — no `x-forge-*` extension changes, in behavior, docs, or WIT.
@@ -159,7 +162,7 @@ The implementation was checked against the unmodified engine on the released agg
 
 ## Release shape
 
-Non-breaking. `x-sensitive` keeps working, deprecated in favor of `x-forge-sensitive`; when it stops being read is FORGE-4's policy question. The WIT changes are doc comments only — `forge:plugin@0.3.0` stays, bindings regenerate identically, no plugin rebuilds anywhere; npm gets an additive release (new native keys accepted, compat module added); the spec surface grows append-only; generated output is byte-identical. Vocabulary renames that *are* breaking (group→namespace, the availability word) are deliberately deferred to FORGE-3 so one breaking release absorbs all of them; the versioning policy that governs this is FORGE-4's RFC.
+Non-breaking. `x-sensitive` keeps working, deprecated in favor of `x-forge-sensitive`; when it stops being read is FORGE-4's policy question. The WIT changes are doc comments only — `forge:plugin@0.3.0` stays, bindings regenerate identically, no plugin rebuilds anywhere; npm gets an additive release: the engine binary it ships accepts the new native keys and, built with the default `compat` feature, still reads the vendor keys, and the JS runtime changes only in doc comments; the spec surface grows append-only; generated output is byte-identical. Vocabulary renames that *are* breaking (group→namespace, the availability word) are deliberately deferred to FORGE-3 so one breaking release absorbs all of them; the versioning policy that governs this is FORGE-4's RFC.
 
 ## Alternatives considered
 
