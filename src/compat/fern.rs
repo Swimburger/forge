@@ -3,7 +3,7 @@
 //! | Key | Says | Format |
 //! |---|---|---|
 //! | `x-fern-sdk-method-name` | the name of the method | a string |
-//! | `x-fern-sdk-group-name` | the group path of the method | as `x-forge-group`: an array of group names, or one string of them separated by dots |
+//! | `x-fern-sdk-group-name` | the group path of the method | as `x-forge-group-name`: an array of group names, or one string of them separated by dots |
 //! | `x-fern-ignore` | the definition makes no method | a boolean |
 //! | `x-fern-availability` | the stage of the API | a string, one of the native spellings |
 //! | `x-fern-parameter-name` | the name of a parameter's field | a string |
@@ -11,7 +11,7 @@
 //! | `x-fern-type-name` | the name of a model | a string |
 //!
 //! A group path written as one string is split on dots, as for
-//! `x-forge-group`, which Fern itself does not do: Fern reads a string as a
+//! `x-forge-group-name`, which Fern itself does not do: Fern reads a string as a
 //! single group. A document written for Fern uses the array, which means the
 //! same in both.
 //!
@@ -45,7 +45,7 @@ pub(super) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
     Some(match key {
         METHOD_NAME => Hit::compat(DefinitionField::Method, 0),
         GROUP_NAME => Hit::compat(DefinitionField::Group, 1),
-        IGNORE => Hit::compat(DefinitionField::Ignore(BoolFormat::Bool), 2),
+        IGNORE => Hit::compat(DefinitionField::Skip(BoolFormat::Bool), 2),
         AVAILABILITY => Hit::compat(DefinitionField::Availability, 3),
         _ => return None,
     })

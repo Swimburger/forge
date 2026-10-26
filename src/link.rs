@@ -565,7 +565,7 @@ impl<'d> Builder<'d> {
         http_method: HttpMethod,
     ) {
         let doc = self.doc;
-        if definition.ignore.value {
+        if definition.skip.value {
             return;
         }
         if definition.method_name.value.is_empty() {
@@ -1595,7 +1595,7 @@ impl<'d> Builder<'d> {
                 Schema::Bool(true) => {}
                 Schema::Object(object) => {
                     let object = doc.get(object);
-                    if object.ignore {
+                    if object.skip {
                         continue;
                     }
                     extension = object.field_name;

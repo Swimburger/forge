@@ -23,7 +23,7 @@ pub(super) fn schema(key: &str) -> Option<Hit<SchemaField>> {
         return None;
     }
     Some(match key {
-        SKIP => Hit::compat(SchemaField::Ignore(BoolFormat::BoolOrTargets), 0),
+        SKIP => Hit::compat(SchemaField::Skip(BoolFormat::BoolOrTargets), 0),
         _ => return None,
     })
 }
@@ -37,7 +37,7 @@ mod tests {
     fn the_skip_is_read_on_a_schema_as_a_boolean_or_targets_and_not_native() {
         let hit = schema(SKIP).unwrap();
         assert_eq!(hit.tier, Tier::Compat, "{SKIP}");
-        assert!(matches!(hit.field, SchemaField::Ignore(BoolFormat::BoolOrTargets)));
+        assert!(matches!(hit.field, SchemaField::Skip(BoolFormat::BoolOrTargets)));
     }
 
     #[test]

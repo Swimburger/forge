@@ -293,7 +293,7 @@ impl<'f> Object<'f> {
     /// except in a [`Method::request`](crate::Method::request) and in
     /// [`Method::headers`](crate::Method::headers).
     ///
-    /// A property marked `x-forge-ignore: true`, or whose schema is
+    /// A property marked `x-forge-skip: true`, or whose schema is
     /// `false`, has no field. A name in `required` that is not a property is
     /// ignored. Two fields with equal names are an error.
     pub fn fields(self) -> impl ExactSizeIterator<Item = Field<'f>> {
@@ -418,7 +418,7 @@ impl<'f> Field<'f> {
     /// `readOnly`, an `x-forge-sensitive` next to a `$ref` counts in every
     /// version of OpenAPI, since tools commonly honour extensions there. A
     /// value that is not a boolean is an error, as it is for a schema's
-    /// `x-forge-ignore` and an operation's `x-forge-hidden`.
+    /// `x-forge-skip` and an operation's `x-forge-hidden`.
     ///
     /// A field for a parameter, whether in the request or in
     /// [`Method::headers`](crate::Method::headers), is sensitive when the

@@ -17,13 +17,13 @@ fn native_wins(native: &str, compat: &str, expected: &str) {
 #[test]
 fn the_native_method_wins() {
     native_wins(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "native","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "native","#,
         r#""x-fern-sdk-method-name": "vendor","#,
-        r#""x-forge-group": ["a"], "x-forge-method-name": "native","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "native","#,
     );
     assert!(
         describe(&parse(&operation_with(
-            r#""x-forge-group": ["a"], "x-forge-method-name": "native", "x-fern-sdk-method-name": "vendor","#
+            r#""x-forge-group-name": ["a"], "x-forge-method-name": "native", "x-fern-sdk-method-name": "vendor","#
         )))
         .contains("method native")
     );
@@ -32,36 +32,36 @@ fn the_native_method_wins() {
 #[test]
 fn the_native_group_wins() {
     native_wins(
-        r#""x-forge-method-name": "get", "x-forge-group": ["native"],"#,
+        r#""x-forge-method-name": "get", "x-forge-group-name": ["native"],"#,
         r#""x-fern-sdk-group-name": "vendor.group","#,
-        r#""x-forge-method-name": "get", "x-forge-group": ["native"],"#,
+        r#""x-forge-method-name": "get", "x-forge-group-name": ["native"],"#,
     );
 }
 
 #[test]
 fn the_native_availability_wins_and_an_invalid_compat_one_is_not_checked() {
     native_wins(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta","#,
         r#""x-fern-availability": "ga","#,
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta","#,
     );
 }
 
 #[test]
-fn a_native_ignore_of_false_keeps_the_method_a_compat_one_would_drop() {
+fn a_native_skip_of_false_keeps_the_method_a_compat_one_would_drop() {
     native_wins(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-ignore": false,"#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-skip": false,"#,
         r#""x-fern-ignore": true,"#,
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get","#,
     );
 }
 
 #[test]
-fn a_native_ignore_of_true_drops_the_method_a_compat_one_would_keep() {
+fn a_native_skip_of_true_drops_the_method_a_compat_one_would_keep() {
     native_wins(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-ignore": true,"#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-skip": true,"#,
         r#""x-fern-ignore": false,"#,
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-ignore": true,"#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-skip": true,"#,
     );
 }
 
@@ -69,7 +69,7 @@ fn a_native_ignore_of_true_drops_the_method_a_compat_one_would_keep() {
 fn the_native_parameter_name_wins() {
     let parameter = |keys: &str| {
         operation_with(&format!(
-            r#""x-forge-group": ["a"], "x-forge-method-name": "list",
+            r#""x-forge-group-name": ["a"], "x-forge-method-name": "list",
               "parameters": [{{"name": "q", "in": "query", {keys} "schema": {{"type": "string"}}}}],"#
         ))
     };
@@ -116,7 +116,7 @@ fn the_native_property_and_model_names_win() {
 }
 
 #[test]
-fn the_native_ignore_of_a_property_wins_over_a_skip() {
+fn the_native_skip_of_a_property_wins_over_a_stainless_one() {
     let property = |keys: &str| {
         responding_with(
             &format!(r#"{{"type": "object", "properties": {{"a": {{"type": "string", {keys}}}}}}}"#),
@@ -124,14 +124,14 @@ fn the_native_ignore_of_a_property_wins_over_a_skip() {
         )
     };
     for keys in [
-        r#""x-forge-ignore": false, "x-stainless-skip": true"#,
-        r#""x-stainless-skip": true, "x-forge-ignore": false"#,
+        r#""x-forge-skip": false, "x-stainless-skip": true"#,
+        r#""x-stainless-skip": true, "x-forge-skip": false"#,
     ] {
         assert!(describe(&parse(&property(keys))).contains("a:a="), "{keys}");
     }
     for keys in [
-        r#""x-forge-ignore": true, "x-stainless-skip": false"#,
-        r#""x-stainless-skip": false, "x-forge-ignore": true"#,
+        r#""x-forge-skip": true, "x-stainless-skip": false"#,
+        r#""x-stainless-skip": false, "x-forge-skip": true"#,
     ] {
         assert!(!describe(&parse(&property(keys))).contains("a:a="), "{keys}");
     }
@@ -141,12 +141,12 @@ fn the_native_ignore_of_a_property_wins_over_a_skip() {
 fn both_keys_with_the_same_value_are_the_same_as_one() {
     assert_same(
         &operation_with(
-            r#""x-forge-group": ["a", "b"], "x-fern-sdk-group-name": "a.b",
+            r#""x-forge-group-name": ["a", "b"], "x-fern-sdk-group-name": "a.b",
               "x-forge-method-name": "get", "x-fern-sdk-method-name": "get",
               "x-forge-availability": "beta", "x-fern-availability": "beta","#,
         ),
         &operation_with(
-            r#""x-forge-group": ["a", "b"], "x-forge-method-name": "get", "x-forge-availability": "beta","#,
+            r#""x-forge-group-name": ["a", "b"], "x-forge-method-name": "get", "x-forge-availability": "beta","#,
         ),
     );
 }
@@ -155,8 +155,12 @@ fn both_keys_with_the_same_value_are_the_same_as_one() {
 fn each_primitive_is_resolved_on_its_own() {
     // The group is native and the method and availability are not.
     assert_same(
-        &operation_with(r#""x-forge-group": ["a"], "x-fern-sdk-method-name": "get", "x-fern-availability": "beta","#),
-        &operation_with(r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta","#),
+        &operation_with(
+            r#""x-forge-group-name": ["a"], "x-fern-sdk-method-name": "get", "x-fern-availability": "beta","#,
+        ),
+        &operation_with(
+            r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta","#,
+        ),
     );
 }
 
@@ -167,7 +171,7 @@ fn a_compat_value_of_the_wrong_type_is_an_error_even_when_a_native_key_wins() {
         r#""x-fern-availability": 1, "x-forge-availability": "beta","#,
     ] {
         let err = parse_err(&operation_with(&format!(
-            r#""x-forge-group": ["a"], "x-forge-method-name": "get", {keys}"#
+            r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", {keys}"#
         )));
 
         assert!(err.contains("invalid type"), "{keys}: {err}");
@@ -176,24 +180,24 @@ fn a_compat_value_of_the_wrong_type_is_an_error_even_when_a_native_key_wins() {
 
 #[test]
 fn a_native_key_written_twice_is_an_error_naming_it() {
-    let err = parse_err(&operation_with(r#""x-forge-ignore": false, "x-forge-ignore": false,"#));
+    let err = parse_err(&operation_with(r#""x-forge-skip": false, "x-forge-skip": false,"#));
 
-    assert!(err.contains("duplicate field `x-forge-ignore`"), "{err}");
+    assert!(err.contains("duplicate field `x-forge-skip`"), "{err}");
 }
 
 #[test]
 fn the_native_group_written_as_a_string_wins() {
     native_wins(
-        r#""x-forge-method-name": "get", "x-forge-group": "native.group","#,
+        r#""x-forge-method-name": "get", "x-forge-group-name": "native.group","#,
         r#""x-fern-sdk-group-name": ["vendor"],"#,
-        r#""x-forge-method-name": "get", "x-forge-group": ["native", "group"],"#,
+        r#""x-forge-method-name": "get", "x-forge-group-name": ["native", "group"],"#,
     );
 }
 
 #[test]
 fn an_error_names_the_native_key_when_the_native_key_gave_the_value() {
     let err = parse_err(&operation_with(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-availability": "ga","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-availability": "ga","#,
     ));
 
     assert!(err.contains(r#"GET /a: x-forge-availability "ga" is not"#), "{err}");
@@ -204,14 +208,14 @@ fn only_the_winning_group_and_method_name_are_checked() {
     // Each compat value is an error on its own, so the document parsing at
     // all shows it was not checked.
     native_wins(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get","#,
         r#""x-fern-sdk-group-name": "a..b","#,
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get","#,
     );
     native_wins(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get","#,
         r#""x-fern-sdk-method-name": "-","#,
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get","#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get","#,
     );
     assert!(
         parse_err(&operation_with(
@@ -221,7 +225,7 @@ fn only_the_winning_group_and_method_name_are_checked() {
     );
     assert!(
         parse_err(&operation_with(
-            r#""x-forge-group": ["a"], "x-fern-sdk-method-name": "-","#
+            r#""x-forge-group-name": ["a"], "x-fern-sdk-method-name": "-","#
         ))
         .contains("x-fern-sdk-method-name")
     );
@@ -243,41 +247,41 @@ fn native_wins_in_an_alias(native: &str, compat: &str, expected: &str, method: &
 #[test]
 fn the_native_keys_of_an_alias_win() {
     native_wins_in_an_alias(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "native""#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "native""#,
         r#""x-fern-sdk-method-name": "vendor""#,
-        r#""x-forge-group": ["a"], "x-forge-method-name": "native""#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "native""#,
         "native",
     );
     native_wins_in_an_alias(
-        r#""x-forge-method-name": "get", "x-forge-group": ["native"]"#,
+        r#""x-forge-method-name": "get", "x-forge-group-name": ["native"]"#,
         r#""x-fern-sdk-group-name": "vendor.group""#,
-        r#""x-forge-method-name": "get", "x-forge-group": ["native"]"#,
+        r#""x-forge-method-name": "get", "x-forge-group-name": ["native"]"#,
         "get",
     );
     native_wins_in_an_alias(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta""#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta""#,
         r#""x-fern-availability": "ga""#,
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta""#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta""#,
         "get",
     );
     native_wins_in_an_alias(
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-ignore": false"#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-forge-skip": false"#,
         r#""x-fern-ignore": true"#,
-        r#""x-forge-group": ["a"], "x-forge-method-name": "get""#,
+        r#""x-forge-group-name": ["a"], "x-forge-method-name": "get""#,
         "get",
     );
 }
 
 #[test]
-fn a_native_ignore_in_an_alias_drops_the_method_a_compat_one_would_keep() {
+fn a_native_skip_in_an_alias_drops_the_method_a_compat_one_would_keep() {
     let alias = |keys: &str| {
         operation_with(&format!(
-            r#""x-forge-aliases": [{{"x-forge-group": ["a"], "x-forge-method-name": "get", {keys}}}],"#
+            r#""x-forge-aliases": [{{"x-forge-group-name": ["a"], "x-forge-method-name": "get", {keys}}}],"#
         ))
     };
     for keys in [
-        r#""x-forge-ignore": true, "x-fern-ignore": false"#,
-        r#""x-fern-ignore": false, "x-forge-ignore": true"#,
+        r#""x-forge-skip": true, "x-fern-ignore": false"#,
+        r#""x-fern-ignore": false, "x-forge-skip": true"#,
     ] {
         assert_eq!(parse(&alias(keys)).groups().count(), 0, "{keys}");
     }

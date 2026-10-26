@@ -129,7 +129,7 @@ pub(crate) enum DefinitionField {
     /// no group.
     Group,
     /// Whether the definition makes no method.
-    Ignore(BoolFormat),
+    Skip(BoolFormat),
     /// The stage of the API the method is in.
     Availability,
     /// Whether the method is left out of listings.
@@ -153,7 +153,7 @@ pub(crate) enum SchemaField {
     /// The name of a property's field.
     PropertyName,
     /// Whether the property makes no field.
-    Ignore(BoolFormat),
+    Skip(BoolFormat),
     /// Whether the schema's value is a secret.
     Sensitive,
 }
@@ -183,8 +183,8 @@ pub(crate) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
     }
     Some(match key {
         METHOD_NAME => Hit::native(DefinitionField::Method, 0),
-        GROUP => Hit::native(DefinitionField::Group, 1),
-        IGNORE => Hit::native(DefinitionField::Ignore(BoolFormat::Bool), 2),
+        GROUP_NAME => Hit::native(DefinitionField::Group, 1),
+        SKIP => Hit::native(DefinitionField::Skip(BoolFormat::Bool), 2),
         AVAILABILITY => Hit::native(DefinitionField::Availability, 3),
         HIDDEN => Hit::native(DefinitionField::Hidden, 4),
         CONFIRMATION => Hit::native(DefinitionField::Confirmation, 5),
@@ -193,8 +193,8 @@ pub(crate) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
 }
 
 const METHOD_NAME: &str = "x-forge-method-name";
-const GROUP: &str = "x-forge-group";
-const IGNORE: &str = "x-forge-ignore";
+const GROUP_NAME: &str = "x-forge-group-name";
+const SKIP: &str = "x-forge-skip";
 const AVAILABILITY: &str = "x-forge-availability";
 const HIDDEN: &str = "x-forge-hidden";
 const CONFIRMATION: &str = "x-forge-require-confirmation";
@@ -209,11 +209,11 @@ const DEPRECATED_SENSITIVE: &str = "x-sensitive";
 const COMMANDS: &str = "x-forge-commands";
 
 /// The names of the native keys of an operation or an alias, by slot.
-pub(crate) const DEFINITION_NAMES: [&str; 6] = [METHOD_NAME, GROUP, IGNORE, AVAILABILITY, HIDDEN, CONFIRMATION];
+pub(crate) const DEFINITION_NAMES: [&str; 6] = [METHOD_NAME, GROUP_NAME, SKIP, AVAILABILITY, HIDDEN, CONFIRMATION];
 /// The names of the native keys of a Parameter Object, by slot.
 pub(crate) const PARAMETER_NAMES: [&str; 1] = [PARAMETER_NAME];
 /// The names of the native keys of a Schema Object, by slot.
-pub(crate) const SCHEMA_NAMES: [&str; 5] = [MODEL_NAME, PROPERTY_NAME, IGNORE, SENSITIVE, DEPRECATED_SENSITIVE];
+pub(crate) const SCHEMA_NAMES: [&str; 5] = [MODEL_NAME, PROPERTY_NAME, SKIP, SENSITIVE, DEPRECATED_SENSITIVE];
 /// The names of the native keys of the document, by slot.
 pub(crate) const DOCUMENT_NAMES: [&str; 1] = [COMMANDS];
 
@@ -243,7 +243,7 @@ pub(crate) fn schema(key: &str) -> Option<Hit<SchemaField>> {
     Some(match key {
         MODEL_NAME => Hit::native(SchemaField::ModelName, 0),
         PROPERTY_NAME => Hit::native(SchemaField::PropertyName, 1),
-        IGNORE => Hit::native(SchemaField::Ignore(BoolFormat::Bool), 2),
+        SKIP => Hit::native(SchemaField::Skip(BoolFormat::Bool), 2),
         SENSITIVE => Hit::native(SchemaField::Sensitive, 3),
         DEPRECATED_SENSITIVE => Hit::deprecated(SchemaField::Sensitive, 4),
         _ => return None,
@@ -302,8 +302,8 @@ mod tests {
         [
             &[
                 "x-forge-method-name",
-                "x-forge-group",
-                "x-forge-ignore",
+                "x-forge-group-name",
+                "x-forge-skip",
                 "x-forge-availability",
                 "x-forge-hidden",
                 "x-forge-require-confirmation",
@@ -312,7 +312,7 @@ mod tests {
             &[
                 "x-forge-model-name",
                 "x-forge-property-name",
-                "x-forge-ignore",
+                "x-forge-skip",
                 "x-forge-sensitive",
                 "x-sensitive",
             ],

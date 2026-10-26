@@ -9,7 +9,7 @@ fn operation_with(fields: &str) -> String {
         r#"{{
           "openapi": "3.0.3", "info": {{"title": "t", "version": "1"}},
           "paths": {{"/a": {{"get": {{{fields}
-            "x-forge-group": ["a"], "x-forge-method-name": "get",
+            "x-forge-group-name": ["a"], "x-forge-method-name": "get",
             "responses": {{"204": {{"description": "ok"}}}}}}}}}}
         }}"#
     )
@@ -85,12 +85,12 @@ fn keys_that_are_not_extensions_are_not_kept() {
 
 #[test]
 fn extensions_forge_reads_are_not_kept() {
-    let forge = parse(&operation_with(r#""x-forge-ignore": false, "x-a": 1,"#));
+    let forge = parse(&operation_with(r#""x-forge-skip": false, "x-a": 1,"#));
 
     let get = method(&forge, "a.get");
     assert_eq!(names(&forge, "a.get"), ["x-a"]);
-    assert_eq!(get.extension("x-forge-group"), None);
-    assert_eq!(get.extension("x-forge-ignore"), None);
+    assert_eq!(get.extension("x-forge-group-name"), None);
+    assert_eq!(get.extension("x-forge-skip"), None);
 }
 
 #[test]
@@ -113,9 +113,9 @@ fn extensions_forge_reads_are_still_read() {
         r#"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {"/a": {
-            "get": {"x-forge-group": ["a", "b"], "x-forge-method-name": "list", "x-a": 1,
+            "get": {"x-forge-group-name": ["a", "b"], "x-forge-method-name": "list", "x-a": 1,
               "responses": {"204": {"description": "ok"}}},
-            "post": {"x-forge-group": ["a"], "x-forge-method-name": "create", "x-forge-ignore": true,
+            "post": {"x-forge-group-name": ["a"], "x-forge-method-name": "create", "x-forge-skip": true,
               "x-a": 1, "responses": {"204": {"description": "ok"}}}
           }}
         }"#,
@@ -136,9 +136,9 @@ fn repeated_extension_has_the_last_value_in_the_place_of_the_first() {
 
 #[test]
 fn repeated_extension_forge_reads_is_still_an_error() {
-    let err = parse_err(&operation_with(r#""x-forge-ignore": false, "x-forge-ignore": false,"#));
+    let err = parse_err(&operation_with(r#""x-forge-skip": false, "x-forge-skip": false,"#));
 
-    assert!(err.contains("duplicate field `x-forge-ignore`"), "{err}");
+    assert!(err.contains("duplicate field `x-forge-skip`"), "{err}");
 }
 
 #[test]
@@ -147,11 +147,11 @@ fn each_method_keeps_its_own_extensions() {
         r#"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {
-            "/a": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "get", "x-a": "get",
+            "/a": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-a": "get",
               "responses": {"204": {"description": "ok"}}}},
-            "/b": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "list",
+            "/b": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "list",
               "responses": {"204": {"description": "ok"}}}},
-            "/c": {"post": {"x-forge-group": ["a"], "x-forge-method-name": "create", "x-a": "create",
+            "/c": {"post": {"x-forge-group-name": ["a"], "x-forge-method-name": "create", "x-a": "create",
               "x-b": [], "responses": {"204": {"description": "ok"}}}}
           }
         }"#,
@@ -170,7 +170,7 @@ fn extensions_outside_the_operation_are_not_kept() {
     let forge = parse(
         r#"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "x-root": 1,
-          "paths": {"/a": {"x-path-item": 1, "get": {"x-forge-group": ["a"], "x-forge-method-name": "get",
+          "paths": {"/a": {"x-path-item": 1, "get": {"x-forge-group-name": ["a"], "x-forge-method-name": "get",
             "parameters": [{"name": "q", "in": "query", "x-parameter": 1, "schema": {"type": "string", "x-schema": 1}}],
             "responses": {"204": {"description": "ok", "x-response": 1}}}}}
         }"#,
@@ -186,11 +186,11 @@ fn operation_of_a_referenced_path_item_keeps_its_extensions() {
           "openapi": "3.1.0", "info": {"title": "t", "version": "1"},
           "paths": {
             "/a": {"$ref": "#/components/pathItems/A"},
-            "/b": {"get": {"x-forge-group": ["b"], "x-forge-method-name": "get", "x-b": 2,
+            "/b": {"get": {"x-forge-group-name": ["b"], "x-forge-method-name": "get", "x-b": 2,
               "responses": {"204": {"description": "ok"}}}}
           },
           "components": {"pathItems": {
-            "A": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "get", "x-a": 1,
+            "A": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "get", "x-a": 1,
               "responses": {"204": {"description": "ok"}}}}
           }}
         }"##,

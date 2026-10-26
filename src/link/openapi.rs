@@ -265,7 +265,7 @@ impl<T> Val<T> {
 struct DefinitionTiers {
     method_name: Tier,
     group_names: Tier,
-    ignore: Tier,
+    skip: Tier,
     availability: Tier,
 }
 
@@ -292,7 +292,7 @@ pub(super) struct Definition {
     /// The group path, top level first, or empty for none.
     pub(super) group_names: Val<Span<Str>>,
     /// Whether the definition makes no method.
-    pub(super) ignore: Val<bool>,
+    pub(super) skip: Val<bool>,
     /// Whether the method is left out of listings.
     pub(super) hidden: bool,
     /// The sentence to confirm with, or `None` for none. An empty one is
@@ -451,7 +451,7 @@ pub(super) struct SchemaObject {
     pub(super) field_name: Str,
     /// Whether a property's schema is marked to be left out: it makes no
     /// field.
-    pub(super) ignore: bool,
+    pub(super) skip: bool,
 }
 
 /// The tier of the key that gave each extension value of a [`SchemaObject`]
@@ -460,7 +460,7 @@ pub(super) struct SchemaObject {
 struct SchemaTiers {
     model_name: Tier,
     field_name: Tier,
-    ignore: Tier,
+    skip: Tier,
     sensitive: Tier,
 }
 
@@ -1319,9 +1319,9 @@ impl Definition {
                 let names = map.next_value_seed(seed::<GroupNames>(doc))?;
                 self.group_names.set(&hit, names, &mut tiers.group_names);
             }
-            DefinitionField::Ignore(format) => {
-                let ignore = read_bool(map, format)?;
-                self.ignore.set(&hit, ignore, &mut tiers.ignore);
+            DefinitionField::Skip(format) => {
+                let skip = read_bool(map, format)?;
+                self.skip.set(&hit, skip, &mut tiers.skip);
             }
             DefinitionField::Availability => {
                 let availability = map.next_value_seed(seed::<ReadStr>(doc))?;
@@ -1791,10 +1791,10 @@ impl ReadObject for SchemaObject {
                                 schema.field_name = name;
                             }
                         }
-                        SchemaField::Ignore(format) => {
-                            let ignore = read_bool(&mut map, format)?;
-                            if takes(&hit, &mut tiers.ignore) {
-                                schema.ignore = ignore;
+                        SchemaField::Skip(format) => {
+                            let skip = read_bool(&mut map, format)?;
+                            if takes(&hit, &mut tiers.skip) {
+                                schema.skip = skip;
                             }
                         }
                         SchemaField::Sensitive => {

@@ -226,7 +226,7 @@ impl std::fmt::Debug for Group<'_> {
 /// own group and name, with the `x-forge-aliases` extension: an array of
 /// objects, each an alias that is a method of the operation. The
 /// operation's own group and name then make no method, and its own
-/// `x-forge-ignore` does not stop its aliases. An empty array makes no
+/// `x-forge-skip` does not stop its aliases. An empty array makes no
 /// method, an element that is not an object is ignored, and a value that
 /// is not an array is an error. Aliases do not nest: an `x-forge-aliases`
 /// in an alias is ignored, as are its keys that are not extensions.
@@ -236,7 +236,7 @@ impl std::fmt::Debug for Group<'_> {
 /// [`availability`](Method::availability), whether it is
 /// [hidden](Method::is_hidden), its [`confirmation`](Method::confirmation)
 /// and its [`extensions`](Method::extensions), and whether it is ignored
-/// with `x-forge-ignore`. None of these come from the operation: an alias
+/// with `x-forge-skip`. None of these come from the operation: an alias
 /// without an extension does not have the operation's. The rest, from the
 /// HTTP method and path to the responses, is the operation's, and every
 /// alias has it. Each alias is a method of its own group, so a model one
@@ -264,12 +264,12 @@ impl<'f> Method<'f> {
 
     /// Returns the group the method is in.
     ///
-    /// Corresponds to the `x-forge-group` extension of the operation, or
+    /// Corresponds to the `x-forge-group-name` extension of the operation, or
     /// of the alias the method comes from: a string of group names
     /// separated by dots, such as `accounts.members`, or an array with one
     /// group name per element, top level first, whose elements are not
     /// split. An operation or alias without one, with an empty one, or
-    /// with `x-forge-ignore: true` is not a method. A group name with no
+    /// with `x-forge-skip: true` is not a method. A group name with no
     /// letters or digits is an error.
     pub fn group(self) -> Group<'f> {
         self.forge.group(self.data().group)
@@ -339,7 +339,7 @@ impl<'f> Method<'f> {
     ///
     /// Corresponds to the `x-forge-hidden` extension of the operation, a
     /// boolean, which is false without it. A value that is not a boolean
-    /// is an error, as for `x-forge-ignore`. Unlike `x-forge-ignore`, a
+    /// is an error, as for `x-forge-skip`. Unlike `x-forge-skip`, a
     /// hidden operation is still a method.
     pub fn is_hidden(self) -> bool {
         self.data().hidden
@@ -499,7 +499,7 @@ impl<'f> Method<'f> {
     /// An extension is a key of the
     /// [Operation Object](https://spec.openapis.org/oas/latest.html#operation-object)
     /// that starts with `x-`. Those forge reads, `x-forge-method-name`,
-    /// `x-forge-group`, `x-forge-ignore`, `x-forge-availability`,
+    /// `x-forge-group-name`, `x-forge-skip`, `x-forge-availability`,
     /// `x-forge-hidden`, `x-forge-require-confirmation` and
     /// `x-forge-aliases`, are left out, and so are the keys the
     /// compatibility layer reads in their place, when forge is built with

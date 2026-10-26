@@ -13,7 +13,7 @@ fn response_model_is_placed_in_its_group() {
           "paths": {
             "/zones": {
               "get": {
-                "x-forge-group": ["zones"],
+                "x-forge-group-name": ["zones"],
                 "x-forge-method-name": "list",
                 "responses": {
                   "200": {
@@ -43,9 +43,9 @@ fn model_used_in_sibling_groups_is_in_their_parent() {
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {
-            "/c": {"get": {"x-forge-group": ["a", "b", "c"], "x-forge-method-name": "get",
+            "/c": {"get": {"x-forge-group-name": ["a", "b", "c"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/M"}}}}}}},
-            "/d": {"get": {"x-forge-group": ["a", "b", "d"], "x-forge-method-name": "get",
+            "/d": {"get": {"x-forge-group-name": ["a", "b", "d"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/M"}}}}}}}
           },
           "components": {"schemas": {"M": {"type": "object", "properties": {"id": {"type": "string"}}}}}
@@ -61,9 +61,9 @@ fn model_used_in_a_group_and_its_subgroup_is_in_the_group() {
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {
-            "/a": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "get",
+            "/a": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/M"}}}}}}},
-            "/c": {"get": {"x-forge-group": ["a", "b", "c"], "x-forge-method-name": "get",
+            "/c": {"get": {"x-forge-group-name": ["a", "b", "c"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/M"}}}}}}}
           },
           "components": {"schemas": {"M": {"type": "object", "properties": {"id": {"type": "string"}}}}}
@@ -79,9 +79,9 @@ fn model_used_in_top_level_groups_is_at_the_top_level() {
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {
-            "/a": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "get",
+            "/a": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/M"}}}}}}},
-            "/x": {"get": {"x-forge-group": ["x"], "x-forge-method-name": "get",
+            "/x": {"get": {"x-forge-group-name": ["x"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/M"}}}}}}}
           },
           "components": {"schemas": {"M": {"type": "object", "properties": {"id": {"type": "string"}}}}}
@@ -99,9 +99,9 @@ fn model_used_through_another_model_is_placed_by_every_use() {
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {
-            "/b": {"get": {"x-forge-group": ["a", "b"], "x-forge-method-name": "get",
+            "/b": {"get": {"x-forge-group-name": ["a", "b"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Outer"}}}}}}},
-            "/c": {"get": {"x-forge-group": ["a", "c"], "x-forge-method-name": "get",
+            "/c": {"get": {"x-forge-group-name": ["a", "c"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Inner"}}}}}}}
           },
           "components": {"schemas": {
@@ -120,7 +120,7 @@ fn params_bodies_and_errors_use_models() {
     let forge = parse(
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"post": {"x-forge-group": ["a"], "x-forge-method-name": "create",
+          "paths": {"/a": {"post": {"x-forge-group-name": ["a"], "x-forge-method-name": "create",
             "parameters": [{"name": "filter", "in": "query", "schema": {"$ref": "#/components/schemas/Filter"}}],
             "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Input"}}}},
             "responses": {"400": {"description": "no", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Failure"}}}}}}}},
@@ -144,16 +144,16 @@ fn schema_no_method_uses_is_not_a_model() {
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {
-            "/a": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "get",
+            "/a": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Used"}}}}}}},
-            "/ignored": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "ignored", "x-forge-ignore": true,
-              "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Ignored"}}}}}}},
+            "/skipped": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "skipped", "x-forge-skip": true,
+              "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Skipped"}}}}}}},
             "/ungrouped": {"get": {"x-forge-method-name": "ungrouped",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Ungrouped"}}}}}}}
           },
           "components": {"schemas": {
             "Used": {"type": "string"},
-            "Ignored": {"type": "string"},
+            "Skipped": {"type": "string"},
             "Ungrouped": {"type": "string"},
             "Unused": {"type": "string"}
           }}
@@ -224,7 +224,7 @@ fn schema_in_defs_is_a_model() {
     let forge = parse(
         r##"{
           "openapi": "3.1.0", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "get",
+          "paths": {"/a": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "get",
             "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Tree/$defs/Node"}}}}}}}},
           "components": {"schemas": {
             "Tree": {"type": "object", "$defs": {"Node": {"type": "string"}}}
@@ -256,7 +256,7 @@ fn schema_used_only_by_content_that_is_not_json_is_a_model() {
     let forge = parse(
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"post": {"x-forge-group": ["a", "files"], "x-forge-method-name": "upload",
+          "paths": {"/a": {"post": {"x-forge-group-name": ["a", "files"], "x-forge-method-name": "upload",
             "requestBody": {"content": {"multipart/form-data": {"schema": {"$ref": "#/components/schemas/Upload"}}}},
             "responses": {"200": {"description": "ok", "content": {"text/csv": {"schema": {"$ref": "#/components/schemas/Report"}}}}}}}},
           "components": {"schemas": {
@@ -287,9 +287,9 @@ fn use_by_content_that_is_not_json_places_a_model() {
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {
-            "/a": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "get",
+            "/a": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "get",
               "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/M"}}}}}}},
-            "/b": {"post": {"x-forge-group": ["b"], "x-forge-method-name": "upload",
+            "/b": {"post": {"x-forge-group-name": ["b"], "x-forge-method-name": "upload",
               "requestBody": {"content": {"multipart/form-data": {"schema": {
                 "type": "object", "properties": {"meta": {"$ref": "#/components/schemas/M"}}
               }}}},
@@ -307,7 +307,7 @@ fn schema_used_only_in_a_response_header_is_not_a_model() {
     let forge = parse(
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"get": {"x-forge-group": ["a"], "x-forge-method-name": "get",
+          "paths": {"/a": {"get": {"x-forge-group-name": ["a"], "x-forge-method-name": "get",
             "parameters": [{"name": "X-Trace", "in": "header", "schema": {"$ref": "#/components/schemas/Trace"}}],
             "responses": {"204": {"description": "ok",
               "headers": {"X-Rate-Limit": {"schema": {"$ref": "#/components/schemas/RateLimit"}}}}}}}},
