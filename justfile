@@ -27,6 +27,10 @@ lint:
     cargo clippy --locked --all-targets --all-features -- -D warnings
     cargo clippy --locked --all-targets --no-default-features -- -D warnings
 
+# Compare the parse benchmark against a revision, with FORGE_SPEC set to a document
+bench-compare rev="main" pairs="12":
+    benches/compare.sh {{rev}} {{pairs}}
+
 # Check that no other tool's extension is named outside the compatibility layer
 boundary:
     cargo test --locked --test boundary
