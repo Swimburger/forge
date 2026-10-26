@@ -580,14 +580,17 @@ impl<'d> Builder<'d> {
             if name.is_empty() {
                 self.error(format_args!(
                     "{} has a group name with no letters or digits",
-                    definition.group_names.key
+                    resolve::definition_name(definition.group_names.slot)
                 ));
                 return;
             }
         }
         let name = Name::new(doc.str(definition.method_name.value));
         if name.is_empty() {
-            self.error(format_args!("{} has no letters or digits", definition.method_name.key));
+            self.error(format_args!(
+                "{} has no letters or digits",
+                resolve::definition_name(definition.method_name.slot)
+            ));
             return;
         }
         let mut availability = None;
@@ -597,7 +600,7 @@ impl<'d> Builder<'d> {
             if availability.is_none() {
                 self.error(format_args!(
                     "{} {value:?} is not alpha, beta, preview, generally-available or deprecated",
-                    definition.availability.key
+                    resolve::definition_name(definition.availability.slot)
                 ));
             }
         }

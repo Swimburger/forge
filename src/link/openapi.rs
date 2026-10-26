@@ -246,8 +246,9 @@ pub(super) struct Operation {
 #[derive(Default)]
 pub(super) struct Val<T> {
     pub(super) value: T,
-    /// The key as written, or empty if no key gave the value.
-    pub(super) key: &'static str,
+    /// The slot of the key that gave the value, which names it. It means
+    /// nothing if no key gave one.
+    pub(super) slot: u8,
     native: bool,
 }
 
@@ -257,7 +258,7 @@ impl<T> Val<T> {
     fn set<F>(&mut self, hit: &Hit<F>, value: T) {
         if takes(hit, &mut self.native) {
             self.value = value;
-            self.key = hit.key;
+            self.slot = hit.slot;
         }
     }
 }
@@ -266,8 +267,8 @@ impl<T> Val<T> {
 /// far, which came from a native key if `native` is set, and records where
 /// the value kept came from.
 fn takes<F>(hit: &Hit<F>, native: &mut bool) -> bool {
-    if hit.native || !*native {
-        *native = hit.native;
+    if hit.is_native() || !*native {
+        *native = hit.is_native();
         return true;
     }
     false
@@ -1117,9 +1118,11 @@ macro_rules! entry {
 
                     fn visit_str<E: de::Error>(self, v: &str) -> Result<$name, E> {
                         // The OpenAPI keys first: most keys of a document are
-                        // one of them, and none is an extension.
+                        // one of them, and none is an extension. Of the rest,
+                        // only an `x-` key is asked about, so that a key that
+                        // is skipped costs one compare.
                         Ok(match $keys::from_key(v) {
-                            $keys::Other => match $resolve(v) {
+                            $keys::Other if v.starts_with("x-") => match $resolve(v) {
                                 Some(hit) => $name::Extension(hit),
                                 None => $name::Key($keys::Other),
                             },

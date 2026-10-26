@@ -15,6 +15,9 @@
 
 use crate::metadata::{BoolFormat, DefinitionField, GroupFormat, Hit, ParameterField, SchemaField};
 
+/// What every key of the adapter begins with. A key without it is turned
+/// away before it is matched against the table.
+const PREFIX: &str = "x-fern-";
 const METHOD_NAME: &str = "x-fern-sdk-method-name";
 const GROUP_NAME: &str = "x-fern-sdk-group-name";
 const IGNORE: &str = "x-fern-ignore";
@@ -23,33 +26,43 @@ const PARAMETER_NAME: &str = "x-fern-parameter-name";
 const PROPERTY_NAME: &str = "x-fern-property-name";
 const TYPE_NAME: &str = "x-fern-type-name";
 
+/// The names of the adapter's keys of an operation or an alias, by slot.
+pub(super) const DEFINITION_NAMES: [&str; 4] = [METHOD_NAME, GROUP_NAME, IGNORE, AVAILABILITY];
+/// The names of the adapter's keys of a Parameter Object, by slot.
+pub(super) const PARAMETER_NAMES: [&str; 1] = [PARAMETER_NAME];
+/// The names of the adapter's keys of a Schema Object, by slot.
+pub(super) const SCHEMA_NAMES: [&str; 2] = [TYPE_NAME, PROPERTY_NAME];
+
 pub(super) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
+    if !key.starts_with(PREFIX) {
+        return None;
+    }
     Some(match key {
-        METHOD_NAME => Hit::compat(DefinitionField::Method, METHOD_NAME, 0),
-        GROUP_NAME => Hit::compat(
-            DefinitionField::Group(GroupFormat::StringOrArray { separator: '.' }),
-            GROUP_NAME,
-            1,
-        ),
-        IGNORE => Hit::compat(DefinitionField::Ignore(BoolFormat::Bool), IGNORE, 2),
-        AVAILABILITY => Hit::compat(DefinitionField::Availability, AVAILABILITY, 3),
+        METHOD_NAME => Hit::compat(DefinitionField::Method, 0),
+        GROUP_NAME => Hit::compat(DefinitionField::Group(GroupFormat::StringOrArray { separator: '.' }), 1),
+        IGNORE => Hit::compat(DefinitionField::Ignore(BoolFormat::Bool), 2),
+        AVAILABILITY => Hit::compat(DefinitionField::Availability, 3),
         _ => return None,
     })
 }
 
 pub(super) fn parameter(key: &str) -> Option<Hit<ParameterField>> {
+    if !key.starts_with(PREFIX) {
+        return None;
+    }
     Some(match key {
-        PARAMETER_NAME => Hit::compat(ParameterField::Name, PARAMETER_NAME, 0),
+        PARAMETER_NAME => Hit::compat(ParameterField::Name, 0),
         _ => return None,
     })
 }
 
-/// Slots 0 and 1 of the compatibility keys of a Schema Object are Fern's;
-/// the next adapter's start at 2.
 pub(super) fn schema(key: &str) -> Option<Hit<SchemaField>> {
+    if !key.starts_with(PREFIX) {
+        return None;
+    }
     Some(match key {
-        TYPE_NAME => Hit::compat(SchemaField::ModelName, TYPE_NAME, 0),
-        PROPERTY_NAME => Hit::compat(SchemaField::PropertyName, PROPERTY_NAME, 1),
+        TYPE_NAME => Hit::compat(SchemaField::ModelName, 0),
+        PROPERTY_NAME => Hit::compat(SchemaField::PropertyName, 1),
         _ => return None,
     })
 }
@@ -62,13 +75,13 @@ mod tests {
     fn each_key_is_read_as_itself_and_as_not_native() {
         for key in [METHOD_NAME, GROUP_NAME, IGNORE, AVAILABILITY] {
             let hit = definition(key).unwrap_or_else(|| panic!("{key} is not a definition key"));
-            assert_eq!((hit.key, hit.native), (key, false));
+            assert!(!hit.is_native(), "{key}");
         }
         let hit = parameter(PARAMETER_NAME).unwrap();
-        assert_eq!((hit.key, hit.native), (PARAMETER_NAME, false));
+        assert!(!hit.is_native(), "{PARAMETER_NAME}");
         for key in [TYPE_NAME, PROPERTY_NAME] {
             let hit = schema(key).unwrap_or_else(|| panic!("{key} is not a schema key"));
-            assert_eq!((hit.key, hit.native), (key, false));
+            assert!(!hit.is_native(), "{key}");
         }
     }
 

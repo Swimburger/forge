@@ -31,6 +31,71 @@ pub(crate) fn parameter(key: &str) -> Option<Hit<ParameterField>> {
 }
 
 /// Returns what `key` says on a Schema Object, if an adapter reads it there.
+/// Each adapter counts its keys from zero, so Stainless's come after Fern's.
 pub(crate) fn schema(key: &str) -> Option<Hit<SchemaField>> {
-    fern::schema(key).or_else(|| stainless::schema(key))
+    fern::schema(key).or_else(|| stainless::schema(key).map(|hit| hit.after(FERN_SCHEMA_KEYS)))
+}
+
+/// How many keys of a Schema Object Fern has, which is where Stainless's
+/// start.
+const FERN_SCHEMA_KEYS: u8 = fern::SCHEMA_NAMES.len() as u8;
+
+/// Returns the name of the key of an operation or an alias that is `n`th
+/// among the keys of the adapters.
+pub(crate) fn definition_name(n: u8) -> &'static str {
+    fern::DEFINITION_NAMES[usize::from(n)]
+}
+
+/// Returns the name of the key of a Parameter Object that is `n`th among the
+/// keys of the adapters.
+pub(crate) fn parameter_name(n: u8) -> &'static str {
+    fern::PARAMETER_NAMES[usize::from(n)]
+}
+
+/// Returns the name of the key of a Schema Object that is `n`th among the
+/// keys of the adapters.
+pub(crate) fn schema_name(n: u8) -> &'static str {
+    match n.checked_sub(FERN_SCHEMA_KEYS) {
+        None => fern::SCHEMA_NAMES[usize::from(n)],
+        Some(n) => stainless::SCHEMA_NAMES[usize::from(n)],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metadata::COMPAT_SLOTS;
+
+    /// Asserts that each key in `names` is read by `read` as a key that is
+    /// not native, whose slot `name` names it by.
+    #[track_caller]
+    fn read_as_itself<F>(names: &[&'static str], read: fn(&str) -> Option<Hit<F>>, name: fn(u8) -> &'static str) {
+        for &key in names {
+            let hit = read(key).unwrap_or_else(|| panic!("{key} is not read"));
+            assert!(!hit.is_native(), "{key}");
+            assert_eq!(name(hit.slot - COMPAT_SLOTS), key);
+        }
+    }
+
+    #[test]
+    fn each_key_of_each_adapter_is_named_by_its_slot() {
+        read_as_itself(&fern::DEFINITION_NAMES, definition, definition_name);
+        read_as_itself(&fern::PARAMETER_NAMES, parameter, parameter_name);
+        read_as_itself(&fern::SCHEMA_NAMES, schema, schema_name);
+        read_as_itself(&stainless::SCHEMA_NAMES, schema, schema_name);
+    }
+
+    #[test]
+    fn the_slots_of_the_adapters_do_not_collide_and_fit_in_a_set() {
+        let mut slots: Vec<u8> = fern::SCHEMA_NAMES
+            .iter()
+            .chain(&stainless::SCHEMA_NAMES)
+            .map(|key| schema(key).unwrap().slot)
+            .collect();
+        let len = slots.len();
+        slots.sort_unstable();
+        slots.dedup();
+        assert_eq!(slots.len(), len);
+        assert!(slots.iter().all(|&slot| slot < 64));
+    }
 }

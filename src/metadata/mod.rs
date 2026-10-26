@@ -21,50 +21,68 @@ use crate::Availability;
 /// [`definition`], since an alias cannot have one.
 pub(crate) const ALIASES: &str = "x-forge-aliases";
 
+/// What every native key begins with, but `x-sensitive`. A key without it is
+/// turned away before it is matched against the table: most extensions in a
+/// document are no key of any table, and this is the cheap way to say so.
+const PREFIX: &str = "x-forge-";
+
 /// A key that says something about the object it is on.
+///
+/// It is kept to a few bytes, since one is read for every key of every
+/// object: the key's name, which only an error needs, is found from its
+/// `slot`, in the table of names of its kind of object.
 #[derive(Clone, Copy)]
 pub(crate) struct Hit<F> {
     /// What the key says.
     pub(crate) field: F,
-    /// The key as the document writes it, for errors.
-    pub(crate) key: &'static str,
-    /// Whether the key is native. A value from a native key is kept over one
-    /// from any other, whatever order they are written in.
-    pub(crate) native: bool,
     /// The bit of the key in a set of the keys read from an object so far,
-    /// which is how a key written twice is found. Unique among the keys of
-    /// one kind of object, native or not.
+    /// which is how a key written twice is found, and the index of its name.
+    /// Unique among the keys of one kind of object, native or not: the
+    /// native keys count up from zero, and the others from [`COMPAT_SLOTS`].
     pub(crate) slot: u8,
 }
 
 /// The first slot of the keys that are not native, so that slots never
 /// collide with the native ones, which count up from zero.
-#[cfg(feature = "compat")]
-const COMPAT_SLOTS: u8 = 32;
+pub(crate) const COMPAT_SLOTS: u8 = 32;
 
 impl<F> Hit<F> {
     /// Returns a native key, in slot `slot`, which is under 32.
-    const fn native(field: F, key: &'static str, slot: u8) -> Hit<F> {
-        Hit {
-            field,
-            key,
-            native: true,
-            slot,
-        }
+    const fn native(field: F, slot: u8) -> Hit<F> {
+        Hit { field, slot }
     }
 
     /// Returns a key that is not native, which a compatibility layer
     /// reads in place of a native one. It is the `n`th of its kind of
     /// object, counting from zero, `n` under 32.
     #[cfg(feature = "compat")]
-    pub(crate) const fn compat(field: F, key: &'static str, n: u8) -> Hit<F> {
+    pub(crate) const fn compat(field: F, n: u8) -> Hit<F> {
         Hit {
             field,
-            key,
-            native: false,
             slot: COMPAT_SLOTS + n,
         }
     }
+
+    /// Returns this key moved `n` slots on, for a compatibility layer that
+    /// puts the keys of several adapters one after another.
+    #[cfg(feature = "compat")]
+    pub(crate) fn after(self, n: u8) -> Hit<F> {
+        Hit {
+            field: self.field,
+            slot: self.slot + n,
+        }
+    }
+
+    /// Returns whether the key is native. A value from a native key is kept
+    /// over one from any other, whatever order they are written in.
+    pub(crate) const fn is_native(&self) -> bool {
+        self.slot < COMPAT_SLOTS
+    }
+}
+
+/// Returns the name in `names` of the key in `slot`, if it is a native one.
+pub(crate) fn native_name(names: &[&'static str], slot: u8) -> Option<&'static str> {
+    names.get(usize::from(slot)).copied()
 }
 
 /// What a key says on an operation, or on an alias of one.
@@ -135,22 +153,40 @@ pub(crate) enum BoolFormat {
 /// Returns what `key` says on an operation or an alias, if it is a native
 /// key of one.
 pub(crate) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
-    const METHOD: &str = "x-forge-method";
-    const GROUP: &str = "x-forge-group";
-    const IGNORE: &str = "x-forge-ignore";
-    const AVAILABILITY: &str = "x-forge-availability";
-    const HIDDEN: &str = "x-forge-hidden";
-    const CONFIRMATION: &str = "x-forge-require-confirmation";
+    if !key.starts_with(PREFIX) {
+        return None;
+    }
     Some(match key {
-        METHOD => Hit::native(DefinitionField::Method, METHOD, 0),
-        GROUP => Hit::native(DefinitionField::Group(GroupFormat::Array), GROUP, 1),
-        IGNORE => Hit::native(DefinitionField::Ignore(BoolFormat::Bool), IGNORE, 2),
-        AVAILABILITY => Hit::native(DefinitionField::Availability, AVAILABILITY, 3),
-        HIDDEN => Hit::native(DefinitionField::Hidden, HIDDEN, 4),
-        CONFIRMATION => Hit::native(DefinitionField::Confirmation, CONFIRMATION, 5),
+        METHOD => Hit::native(DefinitionField::Method, 0),
+        GROUP => Hit::native(DefinitionField::Group(GroupFormat::Array), 1),
+        IGNORE => Hit::native(DefinitionField::Ignore(BoolFormat::Bool), 2),
+        AVAILABILITY => Hit::native(DefinitionField::Availability, 3),
+        HIDDEN => Hit::native(DefinitionField::Hidden, 4),
+        CONFIRMATION => Hit::native(DefinitionField::Confirmation, 5),
         _ => return None,
     })
 }
+
+const METHOD: &str = "x-forge-method";
+const GROUP: &str = "x-forge-group";
+const IGNORE: &str = "x-forge-ignore";
+const AVAILABILITY: &str = "x-forge-availability";
+const HIDDEN: &str = "x-forge-hidden";
+const CONFIRMATION: &str = "x-forge-require-confirmation";
+const PARAMETER_NAME: &str = "x-forge-parameter-name";
+const MODEL_NAME: &str = "x-forge-model-name";
+const PROPERTY_NAME: &str = "x-forge-property-name";
+const SENSITIVE: &str = "x-sensitive";
+const COMMANDS: &str = "x-forge-commands";
+
+/// The names of the native keys of an operation or an alias, by slot.
+pub(crate) const DEFINITION_NAMES: [&str; 6] = [METHOD, GROUP, IGNORE, AVAILABILITY, HIDDEN, CONFIRMATION];
+/// The names of the native keys of a Parameter Object, by slot.
+pub(crate) const PARAMETER_NAMES: [&str; 1] = [PARAMETER_NAME];
+/// The names of the native keys of a Schema Object, by slot.
+pub(crate) const SCHEMA_NAMES: [&str; 4] = [MODEL_NAME, PROPERTY_NAME, IGNORE, SENSITIVE];
+/// The names of the native keys of the document, by slot.
+pub(crate) const DOCUMENT_NAMES: [&str; 1] = [COMMANDS];
 
 /// Returns whether `key` is the `x-forge-aliases` of an operation.
 pub(crate) fn is_aliases(key: &str) -> bool {
@@ -160,24 +196,26 @@ pub(crate) fn is_aliases(key: &str) -> bool {
 /// Returns what `key` says on a Parameter Object, if it is a native key of
 /// one.
 pub(crate) fn parameter(key: &str) -> Option<Hit<ParameterField>> {
-    const NAME: &str = "x-forge-parameter-name";
+    if !key.starts_with(PREFIX) {
+        return None;
+    }
     Some(match key {
-        NAME => Hit::native(ParameterField::Name, NAME, 0),
+        PARAMETER_NAME => Hit::native(ParameterField::Name, 0),
         _ => return None,
     })
 }
 
 /// Returns what `key` says on a Schema Object, if it is a native key of one.
 pub(crate) fn schema(key: &str) -> Option<Hit<SchemaField>> {
-    const MODEL_NAME: &str = "x-forge-model-name";
-    const PROPERTY_NAME: &str = "x-forge-property-name";
-    const IGNORE: &str = "x-forge-ignore";
-    const SENSITIVE: &str = "x-sensitive";
+    // `x-sensitive` is the one native key outside the prefix.
+    if !key.starts_with(PREFIX) && key != SENSITIVE {
+        return None;
+    }
     Some(match key {
-        MODEL_NAME => Hit::native(SchemaField::ModelName, MODEL_NAME, 0),
-        PROPERTY_NAME => Hit::native(SchemaField::PropertyName, PROPERTY_NAME, 1),
-        IGNORE => Hit::native(SchemaField::Ignore(BoolFormat::Bool), IGNORE, 2),
-        SENSITIVE => Hit::native(SchemaField::Sensitive, SENSITIVE, 3),
+        MODEL_NAME => Hit::native(SchemaField::ModelName, 0),
+        PROPERTY_NAME => Hit::native(SchemaField::PropertyName, 1),
+        IGNORE => Hit::native(SchemaField::Ignore(BoolFormat::Bool), 2),
+        SENSITIVE => Hit::native(SchemaField::Sensitive, 3),
         _ => return None,
     })
 }
@@ -185,9 +223,11 @@ pub(crate) fn schema(key: &str) -> Option<Hit<SchemaField>> {
 /// Returns what `key` says at the root of the document, if it is a native
 /// key of it.
 pub(crate) fn document(key: &str) -> Option<Hit<DocumentField>> {
-    const COMMANDS: &str = "x-forge-commands";
+    if !key.starts_with(PREFIX) {
+        return None;
+    }
     Some(match key {
-        COMMANDS => Hit::native(DocumentField::Commands, COMMANDS, 0),
+        COMMANDS => Hit::native(DocumentField::Commands, 0),
         _ => return None,
     })
 }
@@ -209,7 +249,7 @@ pub(crate) fn availability(value: &str) -> Option<Availability> {
 mod tests {
     use super::*;
 
-    /// Every native key of each kind of object, as `(key, slot)`.
+    /// Every native key of each kind of object, in slot order.
     fn native_keys() -> [&'static [&'static str]; 4] {
         [
             &[
@@ -231,25 +271,30 @@ mod tests {
         ]
     }
 
+    /// Asserts that each of `keys` is read by `read` as a native key whose
+    /// slot names it in `names`.
+    #[track_caller]
+    fn read_as_itself<F>(keys: &[&str], names: &[&'static str], read: fn(&str) -> Option<Hit<F>>) {
+        for &key in keys {
+            let hit = read(key).unwrap_or_else(|| panic!("{key} is not read"));
+            assert!(hit.is_native(), "{key}");
+            assert_eq!(native_name(names, hit.slot), Some(key));
+        }
+        assert_eq!(keys.len(), names.len(), "every name is a key that is read");
+    }
+
     #[test]
     fn each_native_key_is_read_as_itself_and_as_native() {
         let [definitions, parameters, schemas, documents] = native_keys();
-        for &key in definitions {
-            let hit = definition(key).unwrap_or_else(|| panic!("{key} is not a definition key"));
-            assert_eq!((hit.key, hit.native), (key, true));
-        }
-        for &key in parameters {
-            let hit = parameter(key).unwrap_or_else(|| panic!("{key} is not a parameter key"));
-            assert_eq!((hit.key, hit.native), (key, true));
-        }
-        for &key in schemas {
-            let hit = schema(key).unwrap_or_else(|| panic!("{key} is not a schema key"));
-            assert_eq!((hit.key, hit.native), (key, true));
-        }
-        for &key in documents {
-            let hit = document(key).unwrap_or_else(|| panic!("{key} is not a document key"));
-            assert_eq!((hit.key, hit.native), (key, true));
-        }
+        read_as_itself(definitions, &DEFINITION_NAMES, definition);
+        read_as_itself(parameters, &PARAMETER_NAMES, parameter);
+        read_as_itself(schemas, &SCHEMA_NAMES, schema);
+        read_as_itself(documents, &DOCUMENT_NAMES, document);
+    }
+
+    #[test]
+    fn a_slot_past_the_native_ones_has_no_native_name() {
+        assert_eq!(native_name(&DEFINITION_NAMES, COMPAT_SLOTS), None);
     }
 
     #[test]
