@@ -68,7 +68,7 @@ Audit of the released aggregate (`openapi.forge.json`, 27.6 MB, sha `99544617…
 | Native key | Form | Meaning | Compat source (the adapter translates) |
 |---|---|---|---|
 | `x-forge-method-name` | string | the method's name | `x-fern-sdk-method-name` |
-| `x-forge-group` | **array of strings**, top level first | the group path | `x-fern-sdk-group-name` (dotted string is Fern's format; the split lives in the adapter. Native has no dot syntax) |
+| `x-forge-group` | **array of strings**, top level first | the group path; `[]` is meant to be the root, but is not yet (see [Known gaps](#known-gaps)) | `x-fern-sdk-group-name` (dotted string is Fern's format; the split lives in the adapter. Native has no dot syntax) |
 | `x-forge-ignore` | bool, positional | operation/alias → no method; property schema → no field | `x-fern-ignore` (operation) · `x-stainless-skip` (property; a list of targets counts as `false` — inside the adapter) |
 | `x-forge-availability` | `alpha` \| `beta` \| `preview` \| `generally-available` \| `deprecated` | lifecycle stage. The values are Forge's shipped vocabulary (public enum across Rust, WIT, JS); Fern merely coincides | `x-fern-availability` |
 | `x-forge-model-name` | string | the model's name (components / `$defs` schema) | `x-fern-type-name` |
@@ -93,9 +93,19 @@ Design notes:
 3. **Same key twice** → error (today's `duplicate field` behavior, unchanged).
 4. **Empty or punctuation-only values** behave as today, which depends on the key:
    - `x-forge-property-name`, `x-forge-parameter-name` and `x-forge-model-name`: a value with no letters or digits, empty included, is ignored, and the field or model is named after its wire name (the property, parameter or schema name).
-   - `x-forge-method-name` and `x-forge-group`: an empty method name, or an empty group path (`[]`, or Fern's `""`), means the operation or alias is not a method. A method name, or any group name in the path, that is not empty but has no letters or digits is an error.
+   - `x-forge-method-name` and `x-forge-group`: an empty method name, or an empty group path (`[]`, or Fern's `""`), means the operation or alias is not a method. For `[]` this is the current behavior, not the intended one: see [Known gaps](#known-gaps). A method name, or any group name in the path, that is not empty but has no letters or digits is an error.
    - Validation errors name the key the author actually wrote (provenance), so existing Fern-keyed error expectations hold.
 5. **Dual-writing** (native and compat keys carrying the same value) is the supported pattern for keeping specs portable across engine versions during the transition: old engines read the compat key, new engines apply native.
+
+## Known gaps
+
+### An empty group path
+
+- **Intended:** `x-forge-group: []` attaches the method to the root, in no group. An operation without `x-forge-group` at all is still not a method.
+- **Today:** `[]` makes no method, exactly like a missing key. `add_method` in `src/link.rs` returns before building the method when the path is empty; `Method::group`'s docs in `src/lib.rs` say so; and `tests/parse/groups.rs::empty_group_name_is_no_group` and the empty-group alias case in `tests/parse/aliases.rs` assert it.
+- **Why it is not fixed here:** the model has no place for a root method. Methods exist only inside groups (`Forge::groups` → `Group::methods`); `Forge` has top-level models but no top-level methods, and neither does the WIT. The fix needs a root method list in the model, a way for plugins to read it (a new WIT function is additive; a new field in an existing record is not), and generators that render root methods. That is beyond FORGE-1, which leaves the model unchanged.
+- **Impact:** none today. The released aggregate has no empty group path and no method name without a group, so the fix will not change its output.
+- **To decide with the fix:** whether Fern's empty string (`x-fern-sdk-group-name: ""`) should also mean the root, or keep meaning "not a method" in the compatibility layer.
 
 ## Architecture
 
