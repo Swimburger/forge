@@ -198,3 +198,87 @@ fn an_error_names_the_native_key_when_the_native_key_gave_the_value() {
 
     assert!(err.contains(r#"GET /a: x-forge-availability "ga" is not"#), "{err}");
 }
+
+#[test]
+fn only_the_winning_group_and_method_name_are_checked() {
+    // Each compat value is an error on its own, so the document parsing at
+    // all shows it was not checked.
+    native_wins(
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get","#,
+        r#""x-fern-sdk-group-name": "a..b","#,
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get","#,
+    );
+    native_wins(
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get","#,
+        r#""x-fern-sdk-method-name": "-","#,
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get","#,
+    );
+    assert!(
+        parse_err(&operation_with(
+            r#""x-fern-sdk-group-name": "a..b", "x-forge-method-name": "get","#
+        ))
+        .contains("x-fern-sdk-group-name")
+    );
+    assert!(
+        parse_err(&operation_with(
+            r#""x-forge-group": ["a"], "x-fern-sdk-method-name": "-","#
+        ))
+        .contains("x-fern-sdk-method-name")
+    );
+}
+
+/// Asserts that every ordering of `native` and `compat`, which are members of
+/// an alias, builds what an alias of `expected` alone does, and that it has a
+/// method named `method`.
+#[track_caller]
+fn native_wins_in_an_alias(native: &str, compat: &str, expected: &str, method: &str) {
+    let alias = |keys: &str| operation_with(&format!(r#""x-forge-aliases": [{{{keys}}}],"#));
+    for keys in [format!("{native}, {compat}"), format!("{compat}, {native}")] {
+        assert_same(&alias(&keys), &alias(expected));
+    }
+    let described = describe(&parse(&alias(expected)));
+    assert!(described.contains(&format!("method {method} ")), "{described}");
+}
+
+#[test]
+fn the_native_keys_of_an_alias_win() {
+    native_wins_in_an_alias(
+        r#""x-forge-group": ["a"], "x-forge-method-name": "native""#,
+        r#""x-fern-sdk-method-name": "vendor""#,
+        r#""x-forge-group": ["a"], "x-forge-method-name": "native""#,
+        "native",
+    );
+    native_wins_in_an_alias(
+        r#""x-forge-method-name": "get", "x-forge-group": ["native"]"#,
+        r#""x-fern-sdk-group-name": "vendor.group""#,
+        r#""x-forge-method-name": "get", "x-forge-group": ["native"]"#,
+        "get",
+    );
+    native_wins_in_an_alias(
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta""#,
+        r#""x-fern-availability": "ga""#,
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-availability": "beta""#,
+        "get",
+    );
+    native_wins_in_an_alias(
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get", "x-forge-ignore": false"#,
+        r#""x-fern-ignore": true"#,
+        r#""x-forge-group": ["a"], "x-forge-method-name": "get""#,
+        "get",
+    );
+}
+
+#[test]
+fn a_native_ignore_in_an_alias_drops_the_method_a_compat_one_would_keep() {
+    let alias = |keys: &str| {
+        operation_with(&format!(
+            r#""x-forge-aliases": [{{"x-forge-group": ["a"], "x-forge-method-name": "get", {keys}}}],"#
+        ))
+    };
+    for keys in [
+        r#""x-forge-ignore": true, "x-fern-ignore": false"#,
+        r#""x-fern-ignore": false, "x-forge-ignore": true"#,
+    ] {
+        assert_eq!(parse(&alias(keys)).groups().count(), 0, "{keys}");
+    }
+}
