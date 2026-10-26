@@ -67,26 +67,29 @@ Audit of the released aggregate (`openapi.forge.json`, 27.6 MB, sha `99544617…
 
 | Native key | Form | Meaning | Compat source (the adapter translates) |
 |---|---|---|---|
-| `x-forge-method` | string | the method's name | `x-fern-sdk-method-name` |
+| `x-forge-method-name` | string | the method's name | `x-fern-sdk-method-name` |
 | `x-forge-group` | **array of strings**, top level first | the group path | `x-fern-sdk-group-name` (dotted string is Fern's format; the split lives in the adapter. Native has no dot syntax) |
 | `x-forge-ignore` | bool, positional | operation/alias → no method; property schema → no field | `x-fern-ignore` (operation) · `x-stainless-skip` (property; a list of targets counts as `false` — inside the adapter) |
 | `x-forge-availability` | `alpha` \| `beta` \| `preview` \| `generally-available` \| `deprecated` | lifecycle stage. The values are Forge's shipped vocabulary (public enum across Rust, WIT, JS); Fern merely coincides | `x-fern-availability` |
 | `x-forge-model-name` | string | the model's name (components / `$defs` schema) | `x-fern-type-name` |
 | `x-forge-property-name` | string | the property's field name | `x-fern-property-name` |
 | `x-forge-parameter-name` | string | the parameter's field name | `x-fern-parameter-name` |
-| `x-forge-hidden`, `x-forge-require-confirmation`, `x-forge-aliases`, `x-forge-commands`, `x-sensitive` | *(existing, unchanged)* | | — no vendor source; now owned by the native table |
+| `x-forge-sensitive` | bool | the schema's value is a secret, to mask | — (replaces `x-sensitive`, below) |
+| `x-sensitive` | bool | **deprecated** name of `x-forge-sensitive`, read only where `x-forge-sensitive` is not written | — (a native key, not a vendor one) |
+| `x-forge-hidden`, `x-forge-require-confirmation`, `x-forge-aliases`, `x-forge-commands` | *(existing, unchanged)* | | — no vendor source; now owned by the native table |
 
 Design notes:
 
 - **Explicit position keys over one positional name key.** Fern used three name keys because its reader architecture had one visitor per OpenAPI object kind. We use explicit keys for a different, real reason: tools in the wild mangle `$ref` structure (inlining targets, dropping siblings), and when placement lies, the key name still carries the role — `x-forge-model-name` on a property schema can be ignored or flagged, where a positional `x-forge-name` would silently become a field name. Explicitness here is corruption-detection, not verbosity.
 - **One exclusion word, two positions.** "Excluded from generated surfaces" is one concept at two scopes; two words (`ignore` + `skip`) would be a memory tax for no disambiguation, and `skip` is Stainless's word.
 - **Arrays for groups.** JSON's native way to write a path. Accepting dotted strings natively would permanently import Fern's format into the native vocabulary; array-only now keeps the option to loosen later (the reverse — tightening later — would break specs). Fern's dotted strings keep working through the adapter for as long as Fern keys do.
+- **Every native key begins with `x-forge-`.** The `-name` keys (`method-name`, `model-name`, `property-name`, `parameter-name`) say the same kind of thing and are spelled alike. `x-sensitive` predates the rule; it becomes `x-forge-sensitive`, and the old name stays readable as a deprecated alias (155 production uses), so no spec breaks. A deprecated alias is part of the native vocabulary, not of the compatibility layer: it keeps working with compat off, and deleting compat does not remove it.
 - **No misplacement validation in v1.** A known native key in a wrong position is silently ignored, exactly as Fern's keys are today. Adding validation later is a pure tightening that breaks no valid spec.
 
 ## Resolution rules
 
-1. **Native applied, compat fallback** — per primitive, independently (a spec mid-migration may take the group from native and availability from Fern).
-2. **Silent native-wins** — when both a native key and a compat key are present, the compat value is ignored without comparison machinery. Only the winning value is validated: an invalid compat `availability` does not error when a native one wins. A value of the wrong JSON type (a number where a string is expected) is still a document-shape error at read time, whichever key it is on and in whatever order the keys are written, so errors never depend on key order. Consequence, to be documented in the metadata docs: a stale compat key silently diverges, and editing the compat key when a native key is present appears to do nothing.
+1. **Native applied, compat fallback** — per primitive, independently (a spec mid-migration may take the group from native and availability from Fern). Keys rank in three tiers: a native key under its current name, then a deprecated native alias (`x-sensitive`), then a compat key. The strongest tier present wins.
+2. **Silent native-wins** — when keys of two tiers are present (a native key and a deprecated alias or compat key), the weaker value is ignored without comparison machinery. Only the winning value is validated: an invalid compat `availability` does not error when a native one wins. A value of the wrong JSON type (a number where a string is expected) is still a document-shape error at read time, whichever key it is on and in whatever order the keys are written, so errors never depend on key order. Consequence, to be documented in the metadata docs: a stale compat key silently diverges, and editing the compat key when a native key is present appears to do nothing.
 3. **Same key twice** → error (today's `duplicate field` behavior, unchanged).
 4. **Empty or punctuation-only values** fall back to the positional wire name, as today; validation errors name the key the author actually wrote (provenance), so existing Fern-keyed error expectations hold.
 5. **Dual-writing** (native and compat keys carrying the same value) is the supported pattern for keeping specs portable across engine versions during the transition: old engines read the compat key, new engines apply native.
@@ -97,9 +100,9 @@ Design notes:
 src/
 ├─ metadata/      THE NATIVE LIBRARY — pure
 │   │             The x-forge-* table (per kind of object: definition,
-│   │             parameter, schema, document), the primitives and format
-│   │             descriptors, the availability vocabulary, the consumed-key
-│   │             set. Imports neither compat nor link. No serde, no arena
+│   │             parameter, schema, document), deprecated native aliases,
+│   │             the primitives and format descriptors, the availability
+│   │             vocabulary, the consumed-key set. Imports neither compat nor link. No serde, no arena
 │   │             coupling: its inputs are &str keys, its outputs small
 │   │             pure values.
 ├─ compat/         THE COMPATIBILITY LAYER — feature "compat" (default on)
@@ -145,10 +148,10 @@ Properties, all deliberate:
 The implementation was checked against the unmodified engine on the released aggregate (`openapi.forge.json`, 27.6 MB, sha `99544617…`):
 
 - **Fern-keyed behavior.** The original, untouched suite — 379 parse tests written with Fern keys — passed against the new engine before any fixture was migrated.
-- **Generated output.** `forge --target ts` on the aggregate writes the same 3,381 files, byte for byte (`diff -r`).
+- **Generated output.** `forge --target ts` on the aggregate writes the same 3,381 files, byte for byte (`diff -r`). The aggregate's 155 `x-sensitive` keys are read through the deprecated alias; the dump's 210 sensitive fields are unchanged.
 - **The model.** The full model dump (the repo's own `tests/wasm/dump.rs`: every group, method, availability, hidden flag, confirmation, extension and field name) is identical between the old and new engines: 197,702 lines, covering 3,021 availability values, 1,259 hidden flags, 217 confirmations and 4,695 extension entries. The generated TypeScript consumes none of those four, which is why the dump, not the output diff, is what proves them.
 - **Across the plugin boundary.** `tests/wasm.rs`, including the ignored `bench` on the aggregate, reports identical output and dump, native versus WASM, for 1,317 groups and 3,381 files; `wit_is_current` holds with the regenerated WIT.
-- **Independence.** `cargo test --no-default-features --features cli` (compat off) passes all 439 tests of the native suite; with compat on, 489 pass. Clippy is clean in the library-alone, compat-off and all-features configurations.
+- **Independence.** `cargo test --no-default-features --features cli` (compat off) passes all 445 tests of the native suite, including the deprecated `x-sensitive` alias; with compat on, 495 pass. Clippy is clean in the library-alone, compat-off and all-features configurations.
 - **The checks can fail.** Breaking the native-wins rule fails 8 compat tests; planting a vendor name in a doc comment fails the boundary test, naming the file and line.
 - **Performance.** Measured with `benches/compare.sh` (`just bench-compare`): parse and link of the aggregate, paired against the unmodified engine, each pair run base–new–new–base so that drift in the machine's speed cancels, and pairs in which the machine changed speed left out. The working tree is 0–1% slower (about +0.45 ms of 41.8 ms, standard error 0.17 ms, on a machine at full speed; −0.04 ms, standard error 0.28, on the same machine throttled). Peak memory is +0.55%, with the same peak allocation count. Parsing is under a tenth of a whole `forge` run on the aggregate (about 0.5 s), so the end-to-end change is under 0.1%.
   - *Where it went.* Profiling (samply, with line tables, attributing inlined frames) found no hot spot of the layer's own: most of the difference is LLVM inlining parts of serde_json's key loop into `SchemaObject::read_object` and laying the code out differently, which moves with any change. Three things were measured and kept: each table turns away keys outside its prefix (`x-forge-`, `x-fern-`, `x-stainless-`) before matching, and only `x-` keys are asked about, so a skipped key costs one compare; and a `Hit` carries only its field and slot, the key's name looked up by slot when an error needs it, so the reader's per-key result fits in registers (16 bytes, as before, not 24).
@@ -156,7 +159,7 @@ The implementation was checked against the unmodified engine on the released agg
 
 ## Release shape
 
-Non-breaking. The WIT changes are doc comments only — `forge:plugin@0.3.0` stays, bindings regenerate identically, no plugin rebuilds anywhere; npm gets an additive release (new native keys accepted, compat module added); the spec surface grows append-only; generated output is byte-identical. Vocabulary renames that *are* breaking (group→namespace, the availability word) are deliberately deferred to FORGE-3 so one breaking release absorbs all of them; the versioning policy that governs this is FORGE-4's RFC.
+Non-breaking. `x-sensitive` keeps working, deprecated in favor of `x-forge-sensitive`; when it stops being read is FORGE-4's policy question. The WIT changes are doc comments only — `forge:plugin@0.3.0` stays, bindings regenerate identically, no plugin rebuilds anywhere; npm gets an additive release (new native keys accepted, compat module added); the spec surface grows append-only; generated output is byte-identical. Vocabulary renames that *are* breaking (group→namespace, the availability word) are deliberately deferred to FORGE-3 so one breaking release absorbs all of them; the versioning policy that governs this is FORGE-4's RFC.
 
 ## Alternatives considered
 
@@ -173,7 +176,7 @@ Non-breaking. The WIT changes are doc comments only — `forge:plugin@0.3.0` sta
 
 | Ticket | What |
 |---|---|
-| FORGE-3 | Vocabulary renames in one breaking release: `group` → `namespace`, plus the availability word review; `x-forge-group`/`x-forge-availability` become permanent alias keys (one table row each). |
+| FORGE-3 | Vocabulary renames in one breaking release: `group` → `namespace`, plus the availability word review; `x-forge-group`/`x-forge-availability` become deprecated aliases (one table row each, the same tier `x-sensitive` uses). |
 | FORGE-4 | The versioning RFC: the four contracts, the rules this RFC assumes, and open questions (1.0 timing, warning channel, vendor-key EoL policy). |
 | FORGE-5 | Informational Forge CI lint flagging vendor keys the engine doesn't read, sourced from this layer's key table. |
 | (FORGE-1 follow-ups) | cf codebase Fern→Forge rename; dotted `operationId` derivation behind an opt-in flag. |
