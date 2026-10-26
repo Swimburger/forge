@@ -23,7 +23,11 @@ name = "parse"
 harness = false
 
 [features]
-default = ["cli"]
+default = ["cli", "compat"]
+# The compatibility layer: it reads the extensions other tools' metadata is
+# written with in place of the native `x-forge-*` ones, when a document has
+# no native one. Without it, only the native extensions mean anything.
+compat = []
 # The `forge` command. Library users can turn it off with
 # `default-features = false`.
 cli = ["dep:clap", "dep:serde_json"]
@@ -48,6 +52,10 @@ required-features = ["cli"]
 [[test]]
 name = "wasm"
 required-features = ["cli", "wasm"]
+
+[[test]]
+name = "compat"
+required-features = ["compat"]
 
 
 [lints.clippy]

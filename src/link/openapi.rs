@@ -24,9 +24,13 @@ use serde::Deserialize;
 use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 
 use super::read::{first, keys};
+use super::resolve;
 use crate::Name;
 use crate::arena::{Id, List, Span, Str, Strings};
 use crate::json::{self, Json};
+use crate::metadata::{
+    self, BoolFormat, DefinitionField, DocumentField, GroupFormat, Hit, ParameterField, SchemaField,
+};
 
 /// An OpenAPI document: the fields of the OpenAPI Object at its root, and
 /// the arenas of the objects in it.
@@ -236,26 +240,57 @@ pub(super) struct Operation {
     pub(super) responses: Span<(Str, Id<Response>)>,
 }
 
+/// A value an extension gives, and the key it came from, so that an error can
+/// name the key the document wrote. A native key's value is kept over any
+/// other's, whatever order they are written in.
+#[derive(Default)]
+pub(super) struct Val<T> {
+    pub(super) value: T,
+    /// The key as written, or empty if no key gave the value.
+    pub(super) key: &'static str,
+    native: bool,
+}
+
+impl<T> Val<T> {
+    /// Keeps `value`, which `hit` gave, unless a native key gave the value
+    /// held and `hit` is not native.
+    fn set<F>(&mut self, hit: &Hit<F>, value: T) {
+        if takes(hit, &mut self.native) {
+            self.value = value;
+            self.key = hit.key;
+        }
+    }
+}
+
+/// Reports whether a value from the key of `hit` replaces the one read so
+/// far, which came from a native key if `native` is set, and records where
+/// the value kept came from.
+fn takes<F>(hit: &Hit<F>, native: &mut bool) -> bool {
+    if hit.native || !*native {
+        *native = hit.native;
+        return true;
+    }
+    false
+}
+
 /// The extensions that make an Operation Object, or an alias of one in its
 /// `x-forge-aliases`, a method.
 #[derive(Default)]
 pub(super) struct Definition {
-    /// The `x-fern-sdk-method-name`, or empty for none.
-    pub(super) method_name: Str,
-    /// The `x-fern-sdk-group-name`: the group path, top level first, or
-    /// empty for none.
-    pub(super) group_names: Span<Str>,
-    /// `x-fern-ignore`.
-    pub(super) ignore: bool,
-    /// `x-forge-hidden`.
+    /// The name of the method, or empty for none.
+    pub(super) method_name: Val<Str>,
+    /// The group path, top level first, or empty for none.
+    pub(super) group_names: Val<Span<Str>>,
+    /// Whether the definition makes no method.
+    pub(super) ignore: Val<bool>,
+    /// Whether the method is left out of listings.
     pub(super) hidden: bool,
-    /// The `x-forge-require-confirmation`, or `None` for none. An empty
-    /// one is `Some`.
+    /// The sentence to confirm with, or `None` for none. An empty one is
+    /// `Some`.
     pub(super) confirmation: Option<Str>,
-    /// The `x-fern-availability` as written, or `None` for none. It is
-    /// checked as the method is built, so that an error can name the
-    /// operation.
-    pub(super) availability: Option<Str>,
+    /// The availability as written, or `None` for none. It is checked as
+    /// the method is built, so that an error can name the operation.
+    pub(super) availability: Val<Option<Str>>,
     /// Each other extension, which is not read, in `Doc::extensions`, in
     /// the order they are written. One written more than once has the last
     /// value written, in the place of the first.
@@ -280,8 +315,10 @@ pub(super) struct Parameter {
     /// The schema of each media type of a parameter described by
     /// `content` rather than `schema`, in the order they are written.
     pub(super) content: Span<(Str, Schema)>,
-    /// The `x-fern-parameter-name`, or empty for none.
+    /// The name of the parameter's field, or empty for none.
     pub(super) field_name: Str,
+    /// Whether a native key gave `field_name`.
+    field_name_native: bool,
 }
 
 /// Where a parameter is sent: the `in` of a Parameter Object.
@@ -399,15 +436,19 @@ pub(super) struct SchemaObject {
     /// Whether the schema is marked `x-sensitive: true`: the value is a
     /// secret, such as a password or a token.
     pub(super) sensitive: bool,
-    /// The `x-fern-type-name`: the name of the model, for a schema in
-    /// `components.schemas`, or empty for none.
+    /// The name of the model, for a schema in `components.schemas`, or
+    /// empty for none.
     pub(super) model_name: Str,
-    /// The `x-fern-property-name`: the name of the field, for a property's
-    /// schema, or empty for none.
+    /// The name of the field, for a property's schema, or empty for none.
     pub(super) field_name: Str,
-    /// Whether a property's schema is marked `x-stainless-skip: true`. A
-    /// list of the targets to skip it for is ignored.
-    pub(super) skip: bool,
+    /// Whether a property's schema is marked to be left out: it makes no
+    /// field.
+    pub(super) ignore: bool,
+    /// Whether a native key gave `model_name`, `field_name` and `ignore`,
+    /// each, so that no other key replaces it.
+    model_name_native: bool,
+    field_name_native: bool,
+    ignore_native: bool,
 }
 
 /// A value of `type` in a Schema Object.
@@ -851,29 +892,36 @@ impl Read for Types {
     }
 }
 
-/// Reads an `x-fern-sdk-group-name`: a string split on dots, or an array of
-/// strings that are not split. The empty string is no group.
-struct GroupNames;
+/// What reads a group path into a `Doc`, in the format it is written in:
+/// an array of strings, which are not split, and, if the format says so, a
+/// string split on its separator, where the empty string is no group.
+struct GroupNames<'a>(&'a mut Doc, GroupFormat);
 
-impl Read for GroupNames {
-    type Out = Span<Str>;
+impl<'de> DeserializeSeed<'de> for GroupNames<'_> {
+    type Value = Span<Str>;
 
-    fn read<'de, D: Deserializer<'de>>(doc: &mut Doc, deserializer: D) -> Result<Span<Str>, D::Error> {
-        struct GroupNamesVisitor<'a>(&'a mut Doc);
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Span<Str>, D::Error> {
+        struct GroupNamesVisitor<'a>(&'a mut Doc, GroupFormat);
 
         impl<'de> Visitor<'de> for GroupNamesVisitor<'_> {
             type Value = Span<Str>;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("a string or an array of strings")
+                match self.1 {
+                    GroupFormat::Array => f.write_str("an array of strings"),
+                    GroupFormat::StringOrArray { .. } => f.write_str("a string or an array of strings"),
+                }
             }
 
             fn visit_str<E: de::Error>(self, v: &str) -> Result<Span<Str>, E> {
+                let GroupFormat::StringOrArray { separator } = self.1 else {
+                    return Err(E::invalid_type(de::Unexpected::Str(v), &self));
+                };
                 if v.is_empty() {
                     return Ok(Span::default());
                 }
                 let doc = self.0;
-                Ok(doc.strings.push_split(v, '.', &mut doc.str_lists))
+                Ok(doc.strings.push_split(v, separator, &mut doc.str_lists))
             }
 
             fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Span<Str>, A::Error> {
@@ -882,7 +930,16 @@ impl Read for GroupNames {
             }
         }
 
-        deserializer.deserialize_any(GroupNamesVisitor(doc))
+        deserializer.deserialize_any(GroupNamesVisitor(self.0, self.1))
+    }
+}
+
+/// Reads a boolean in the format it is written in: `true` or `false`, and,
+/// if the format says so, an array of targets, which is `false`.
+fn read_bool<'de, A: MapAccess<'de>>(map: &mut A, format: BoolFormat) -> Result<bool, A::Error> {
+    match format {
+        BoolFormat::Bool => map.next_value(),
+        BoolFormat::BoolOrTargets => Ok(map.next_value::<BoolOrTargets>()?.0),
     }
 }
 
@@ -1036,6 +1093,47 @@ impl<'de> Deserialize<'de> for FirstServer {
     }
 }
 
+/// Declares `$name`, a key of an object that has extensions: what `$resolve`
+/// says if it is an `x-` key that means something there, and else one of the
+/// OpenAPI keys `$keys` declares, or `Other`. The extensions are kept apart
+/// from `$keys`, since they have their own way of being written twice.
+macro_rules! entry {
+    ($name:ident, $keys:ident, $field:ty, $resolve:path) => {
+        enum $name {
+            Key($keys),
+            Extension(Hit<$field>),
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<$name, D::Error> {
+                struct EntryVisitor;
+
+                impl Visitor<'_> for EntryVisitor {
+                    type Value = $name;
+
+                    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        f.write_str("a key")
+                    }
+
+                    fn visit_str<E: de::Error>(self, v: &str) -> Result<$name, E> {
+                        // The OpenAPI keys first: most keys of a document are
+                        // one of them, and none is an extension.
+                        Ok(match $keys::from_key(v) {
+                            $keys::Other => match $resolve(v) {
+                                Some(hit) => $name::Extension(hit),
+                                None => $name::Key($keys::Other),
+                            },
+                            key => $name::Key(key),
+                        })
+                    }
+                }
+
+                deserializer.deserialize_identifier(EntryVisitor)
+            }
+        }
+    };
+}
+
 keys! {
     DocumentKey {
         Openapi = "openapi",
@@ -1043,9 +1141,10 @@ keys! {
         Servers = "servers",
         Paths = "paths",
         Components = "components",
-        Commands = "x-forge-commands",
     }
 }
+
+entry!(DocumentEntry, DocumentKey, DocumentField, resolve::document);
 
 struct DocumentVisitor<'a>(&'a mut Doc);
 
@@ -1059,7 +1158,18 @@ impl<'de> Visitor<'de> for DocumentVisitor<'_> {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
         let doc = self.0;
         let mut seen = 0;
-        while let Some(key) = map.next_key::<DocumentKey>()? {
+        let mut seen_extensions = 0;
+        while let Some(entry) = map.next_key::<DocumentEntry>()? {
+            let key = match entry {
+                DocumentEntry::Extension(hit) => {
+                    resolve::once(&hit, &mut seen_extensions)?;
+                    match hit.field {
+                        DocumentField::Commands => doc.commands = map.next_value()?,
+                    }
+                    continue;
+                }
+                DocumentEntry::Key(key) => key,
+            };
             key.once(&mut seen)?;
             match key {
                 DocumentKey::Openapi => doc.openapi = map.next_value()?,
@@ -1071,7 +1181,6 @@ impl<'de> Visitor<'de> for DocumentVisitor<'_> {
                 DocumentKey::Components => {
                     doc.components = map.next_value_seed(seed::<Components>(doc))?;
                 }
-                DocumentKey::Commands => doc.commands = map.next_value()?,
                 DocumentKey::Other => skip(&mut map)?,
             }
         }
@@ -1182,38 +1291,37 @@ impl ReadObject for PathItem {
     }
 }
 
-keys! {
-    /// The keys of a [`Definition`], in an Operation Object or an alias.
-    DefinitionKey {
-        MethodName = "x-fern-sdk-method-name",
-        GroupNames = "x-fern-sdk-group-name",
-        Ignore = "x-fern-ignore",
-        Hidden = "x-forge-hidden",
-        Confirmation = "x-forge-require-confirmation",
-        Availability = "x-fern-availability",
-    }
-}
-
 impl Definition {
-    /// Reads the value of `key`, the key of the entry `map` is reading.
+    /// Reads the value of the key `hit` says, the key of the entry `map` is
+    /// reading. A value of a key that is not native is kept only until a
+    /// native key gives one.
     fn read_value<'de, A: MapAccess<'de>>(
         &mut self,
         doc: &mut Doc,
         map: &mut A,
-        key: DefinitionKey,
+        hit: Hit<DefinitionField>,
     ) -> Result<(), A::Error> {
-        match key {
-            DefinitionKey::MethodName => self.method_name = map.next_value_seed(seed::<ReadStr>(doc))?,
-            DefinitionKey::GroupNames => self.group_names = map.next_value_seed(seed::<GroupNames>(doc))?,
-            DefinitionKey::Ignore => self.ignore = map.next_value()?,
-            DefinitionKey::Hidden => self.hidden = map.next_value()?,
-            DefinitionKey::Confirmation => {
+        match hit.field {
+            DefinitionField::Method => {
+                let name = map.next_value_seed(seed::<ReadStr>(doc))?;
+                self.method_name.set(&hit, name);
+            }
+            DefinitionField::Group(format) => {
+                let names = map.next_value_seed(GroupNames(doc, format))?;
+                self.group_names.set(&hit, names);
+            }
+            DefinitionField::Ignore(format) => {
+                let ignore = read_bool(map, format)?;
+                self.ignore.set(&hit, ignore);
+            }
+            DefinitionField::Availability => {
+                let availability = map.next_value_seed(seed::<ReadStr>(doc))?;
+                self.availability.set(&hit, Some(availability));
+            }
+            DefinitionField::Hidden => self.hidden = map.next_value()?,
+            DefinitionField::Confirmation => {
                 self.confirmation = Some(map.next_value_seed(seed::<ReadStr>(doc))?);
             }
-            DefinitionKey::Availability => {
-                self.availability = Some(map.next_value_seed(seed::<ReadStr>(doc))?);
-            }
-            DefinitionKey::Other => skip(map)?,
         }
         Ok(())
     }
@@ -1236,9 +1344,9 @@ impl ReadObject for Alias {
         let mut extensions = Vec::new();
         while let Some(field) = map.next_key::<AliasField>()? {
             match field {
-                AliasField::Definition(key) => {
-                    key.once(&mut seen)?;
-                    definition.read_value(doc, &mut map, key)?;
+                AliasField::Definition(hit) => {
+                    resolve::once(&hit, &mut seen)?;
+                    definition.read_value(doc, &mut map, hit)?;
                 }
                 AliasField::Extension(name) => json::insert(&mut extensions, name, map.next_value()?),
                 AliasField::Other => skip(&mut map)?,
@@ -1346,7 +1454,7 @@ impl<'de> Visitor<'de> for MaybeAlias<'_> {
 /// which is kept by its name, or any other key, which is skipped, as
 /// [`Alias`] says.
 enum AliasField {
-    Definition(DefinitionKey),
+    Definition(Hit<DefinitionField>),
     Extension(String),
     Other,
 }
@@ -1363,13 +1471,13 @@ impl<'de> Deserialize<'de> for AliasField {
             }
 
             fn visit_str<E: de::Error>(self, v: &str) -> Result<AliasField, E> {
-                Ok(match DefinitionKey::from_key(v) {
-                    DefinitionKey::Other if !v.starts_with("x-") => AliasField::Other,
-                    DefinitionKey::Other => match OperationKey::from_key(v) {
-                        OperationKey::Aliases => AliasField::Other,
-                        _ => AliasField::Extension(v.to_owned()),
-                    },
-                    key => AliasField::Definition(key),
+                if !v.starts_with("x-") {
+                    return Ok(AliasField::Other);
+                }
+                Ok(match resolve::definition(v) {
+                    Some(hit) => AliasField::Definition(hit),
+                    None if metadata::is_aliases(v) => AliasField::Other,
+                    None => AliasField::Extension(v.to_owned()),
                 })
             }
         }
@@ -1380,7 +1488,6 @@ impl<'de> Deserialize<'de> for AliasField {
 
 keys! {
     OperationKey {
-        Aliases = "x-forge-aliases",
         Summary = "summary",
         Description = "description",
         Deprecated = "deprecated",
@@ -1404,9 +1511,16 @@ impl ReadObject for Operation {
         while let Some(field) = map.next_key::<OperationField>()? {
             let key = match field {
                 OperationField::Key(key) => key,
-                OperationField::Definition(key) => {
-                    key.once(&mut seen_definition)?;
-                    operation.definition.read_value(doc, &mut map, key)?;
+                OperationField::Definition(hit) => {
+                    resolve::once(&hit, &mut seen_definition)?;
+                    operation.definition.read_value(doc, &mut map, hit)?;
+                    continue;
+                }
+                OperationField::Aliases => {
+                    if operation.aliases.is_some() {
+                        return Err(de::Error::duplicate_field(metadata::ALIASES));
+                    }
+                    operation.aliases = Some(map.next_value_seed(seed::<Aliases>(doc))?);
                     continue;
                 }
                 OperationField::Extension(name) => {
@@ -1416,9 +1530,6 @@ impl ReadObject for Operation {
             };
             key.once(&mut seen)?;
             match key {
-                OperationKey::Aliases => {
-                    operation.aliases = Some(map.next_value_seed(seed::<Aliases>(doc))?);
-                }
                 OperationKey::Summary => operation.summary = map.next_value_seed(seed::<ReadStr>(doc))?,
                 OperationKey::Description => {
                     operation.description = map.next_value_seed(seed::<ReadStr>(doc))?;
@@ -1441,11 +1552,12 @@ impl ReadObject for Operation {
     }
 }
 
-/// A key of an Operation Object: one of its definition, another that is
-/// read, or an extension that is not, which is kept by its name. Any other
-/// key is `OperationKey::Other`.
+/// A key of an Operation Object: one of its definition, its aliases,
+/// another that is read, or an extension that is not, which is kept by its
+/// name. Any other key is `OperationKey::Other`.
 enum OperationField {
-    Definition(DefinitionKey),
+    Definition(Hit<DefinitionField>),
+    Aliases,
     Key(OperationKey),
     Extension(String),
 }
@@ -1462,12 +1574,13 @@ impl<'de> Deserialize<'de> for OperationField {
             }
 
             fn visit_str<E: de::Error>(self, v: &str) -> Result<OperationField, E> {
-                match DefinitionKey::from_key(v) {
-                    DefinitionKey::Other => {}
-                    key => return Ok(OperationField::Definition(key)),
-                }
+                // The OpenAPI keys first, as for any other object.
                 Ok(match OperationKey::from_key(v) {
-                    OperationKey::Other if v.starts_with("x-") => OperationField::Extension(v.to_owned()),
+                    OperationKey::Other if v.starts_with("x-") => match resolve::definition(v) {
+                        Some(hit) => OperationField::Definition(hit),
+                        None if metadata::is_aliases(v) => OperationField::Aliases,
+                        None => OperationField::Extension(v.to_owned()),
+                    },
                     key => OperationField::Key(key),
                 })
             }
@@ -1489,9 +1602,10 @@ keys! {
         Explode = "explode",
         Schema = "schema",
         Content = "content",
-        FieldName = "x-fern-parameter-name",
     }
 }
+
+entry!(ParameterEntry, ParameterKey, ParameterField, resolve::parameter);
 
 impl ReadObject for Parameter {
     type Out = Id<Parameter>;
@@ -1500,7 +1614,23 @@ impl ReadObject for Parameter {
     fn read_object<'de, A: MapAccess<'de>>(doc: &mut Doc, mut map: A) -> Result<Id<Parameter>, A::Error> {
         let mut param = Parameter::default();
         let mut seen = 0;
-        while let Some(key) = map.next_key::<ParameterKey>()? {
+        let mut seen_extensions = 0;
+        while let Some(entry) = map.next_key::<ParameterEntry>()? {
+            let key = match entry {
+                ParameterEntry::Extension(hit) => {
+                    resolve::once(&hit, &mut seen_extensions)?;
+                    match hit.field {
+                        ParameterField::Name => {
+                            let name = map.next_value_seed(seed::<ReadStr>(doc))?;
+                            if takes(&hit, &mut param.field_name_native) {
+                                param.field_name = name;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                ParameterEntry::Key(key) => key,
+            };
             key.once(&mut seen)?;
             match key {
                 ParameterKey::Ref => param.reference = map.next_value_seed(seed::<Reference>(doc))?,
@@ -1517,7 +1647,6 @@ impl ReadObject for Parameter {
                 ParameterKey::Content => {
                     param.content = map.next_value_seed(seed::<AllEntries<MediaType>>(doc))?;
                 }
-                ParameterKey::FieldName => param.field_name = map.next_value_seed(seed::<ReadStr>(doc))?,
                 ParameterKey::Other => skip(&mut map)?,
             }
         }
@@ -1619,12 +1748,10 @@ keys! {
         Default = "default",
         Deprecated = "deprecated",
         ReadOnly = "readOnly",
-        Sensitive = "x-sensitive",
-        ModelName = "x-fern-type-name",
-        FieldName = "x-fern-property-name",
-        Skip = "x-stainless-skip",
     }
 }
+
+entry!(SchemaEntry, SchemaKey, SchemaField, resolve::schema);
 
 impl ReadObject for SchemaObject {
     type Out = Id<SchemaObject>;
@@ -1633,7 +1760,36 @@ impl ReadObject for SchemaObject {
     fn read_object<'de, A: MapAccess<'de>>(doc: &mut Doc, mut map: A) -> Result<Id<SchemaObject>, A::Error> {
         let mut schema = SchemaObject::default();
         let mut seen = 0;
-        while let Some(key) = map.next_key::<SchemaKey>()? {
+        let mut seen_extensions = 0;
+        while let Some(entry) = map.next_key::<SchemaEntry>()? {
+            let key = match entry {
+                SchemaEntry::Extension(hit) => {
+                    resolve::once(&hit, &mut seen_extensions)?;
+                    match hit.field {
+                        SchemaField::ModelName => {
+                            let name = map.next_value_seed(seed::<ReadStr>(doc))?;
+                            if takes(&hit, &mut schema.model_name_native) {
+                                schema.model_name = name;
+                            }
+                        }
+                        SchemaField::PropertyName => {
+                            let name = map.next_value_seed(seed::<ReadStr>(doc))?;
+                            if takes(&hit, &mut schema.field_name_native) {
+                                schema.field_name = name;
+                            }
+                        }
+                        SchemaField::Ignore(format) => {
+                            let ignore = read_bool(&mut map, format)?;
+                            if takes(&hit, &mut schema.ignore_native) {
+                                schema.ignore = ignore;
+                            }
+                        }
+                        SchemaField::Sensitive => schema.sensitive = map.next_value()?,
+                    }
+                    continue;
+                }
+                SchemaEntry::Key(key) => key,
+            };
             key.once(&mut seen)?;
             match key {
                 SchemaKey::Ref => schema.reference = map.next_value_seed(seed::<Reference>(doc))?,
@@ -1676,10 +1832,6 @@ impl ReadObject for SchemaObject {
                 SchemaKey::Default => schema.default = Some(doc.add(map.next_value::<Json>()?)),
                 SchemaKey::Deprecated => schema.deprecated = map.next_value()?,
                 SchemaKey::ReadOnly => schema.read_only = map.next_value()?,
-                SchemaKey::Sensitive => schema.sensitive = map.next_value()?,
-                SchemaKey::ModelName => schema.model_name = map.next_value_seed(seed::<ReadStr>(doc))?,
-                SchemaKey::FieldName => schema.field_name = map.next_value_seed(seed::<ReadStr>(doc))?,
-                SchemaKey::Skip => schema.skip = map.next_value::<StainlessSkip>()?.0,
                 SchemaKey::Other => skip(&mut map)?,
             }
         }
@@ -1783,32 +1935,32 @@ impl<'de> Deserialize<'de> for Count {
     }
 }
 
-/// An `x-stainless-skip`: `true` or `false`, or a list of the targets to
-/// skip for, which is not `true`.
-struct StainlessSkip(bool);
+/// A boolean that can also be written as a list of targets, which is not
+/// `true`: the targets it would hold for are not read.
+struct BoolOrTargets(bool);
 
-impl<'de> Deserialize<'de> for StainlessSkip {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<StainlessSkip, D::Error> {
-        struct SkipVisitor;
+impl<'de> Deserialize<'de> for BoolOrTargets {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<BoolOrTargets, D::Error> {
+        struct TargetsVisitor;
 
-        impl<'de> Visitor<'de> for SkipVisitor {
-            type Value = StainlessSkip;
+        impl<'de> Visitor<'de> for TargetsVisitor {
+            type Value = BoolOrTargets;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("a boolean or an array of targets")
             }
 
-            fn visit_bool<E: de::Error>(self, v: bool) -> Result<StainlessSkip, E> {
-                Ok(StainlessSkip(v))
+            fn visit_bool<E: de::Error>(self, v: bool) -> Result<BoolOrTargets, E> {
+                Ok(BoolOrTargets(v))
             }
 
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<StainlessSkip, A::Error> {
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<BoolOrTargets, A::Error> {
                 while let Some(IgnoredAny) = seq.next_element()? {}
-                Ok(StainlessSkip(false))
+                Ok(BoolOrTargets(false))
             }
         }
 
-        deserializer.deserialize_any(SkipVisitor)
+        deserializer.deserialize_any(TargetsVisitor)
     }
 }
 

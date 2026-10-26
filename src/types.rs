@@ -293,7 +293,7 @@ impl<'f> Object<'f> {
     /// except in a [`Method::request`](crate::Method::request) and in
     /// [`Method::headers`](crate::Method::headers).
     ///
-    /// A property marked `x-stainless-skip: true`, or whose schema is
+    /// A property marked `x-forge-ignore: true`, or whose schema is
     /// `false`, has no field. A name in `required` that is not a property is
     /// ignored. Two fields with equal names are an error.
     pub fn fields(self) -> impl ExactSizeIterator<Item = Field<'f>> {
@@ -330,7 +330,7 @@ impl<'f> Field<'f> {
 
     /// Returns the name of the field.
     ///
-    /// Corresponds to the `x-fern-property-name` extension of the
+    /// Corresponds to the `x-forge-property-name` extension of the
     /// property, or its wire name if it has none.
     pub fn name(self) -> &'f Name {
         &self.forge.names[self.data.name.index()]
@@ -416,7 +416,7 @@ impl<'f> Field<'f> {
     /// `readOnly`, an `x-sensitive` next to a `$ref` counts in every
     /// version of OpenAPI, since tools commonly honour extensions there. A
     /// value that is not a boolean is an error, as it is for a schema's
-    /// `x-stainless-skip` and an operation's `x-forge-hidden`.
+    /// `x-forge-ignore` and an operation's `x-forge-hidden`.
     ///
     /// A field for a parameter, whether in the request or in
     /// [`Method::headers`](crate::Method::headers), is sensitive when the
@@ -509,7 +509,7 @@ impl<'f> Discriminator<'f> {
     }
 
     /// Returns the name of the property's field: the
-    /// `x-fern-property-name` of the property in the members, or else its
+    /// `x-forge-property-name` of the property in the members, or else its
     /// wire name.
     pub fn name(self) -> &'f Name {
         &self.data.name
