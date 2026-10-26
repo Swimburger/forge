@@ -123,7 +123,7 @@ Properties, all deliberate:
 - **Dependencies**: `link → metadata` and `link → compat` (behind the feature), and `compat → metadata` (an adapter produces metadata's primitives). `metadata` imports neither of the others, so compat sits *beside* the native table rather than under it. `link/resolve.rs` asks native first, compat second — that fallback arm *is* the D4 rule.
 - **Purity**: the library's contract is `&str` keys in and small values out: primitives, key names, and *format descriptors as data* (for example "a string splits on `.`" or "a list of targets counts as `false`"). The serde reading and the arena writes stay in `link` and are generic, driven by those descriptors. This is what makes the library pluggable, standalone-consumable (a future `forge-ci validate` needs the key table, not the engine), and mechanically liftable into a real separate crate when the first standalone consumer appears (FORGE-5's work).
 - **The availability vocabulary is native.** The five values live in the native table (they are shipped public API); `fern.rs` only maps `x-fern-availability` onto that primitive.
-- **Deletion is the designed end state.** `cargo build --no-default-features --features cli` proves the native vocabulary stands alone; when vendor keys reach end-of-life, deleting `compat/` and the one cfg arm in `link/resolve.rs` touches nothing else — no `x-forge-*` extension changes, in behavior, docs, or WIT.
+- **Deletion is the designed end state.** `cargo build --no-default-features --features cli` proves the native vocabulary stands alone; when vendor keys reach end-of-life, deleting `compat/` and the cfg arms in `link/resolve.rs` (one for each kind of object) touches nothing else — no `x-forge-*` extension changes, in behavior, docs, or WIT.
 - **Dispatch, not semantics**: the layer maps keys to primitives and normalizes simple values. Structural behavior — `x-forge-aliases` becoming methods, `x-forge-commands` describing groups — stays in the builder.
 
 ## Enforcement
@@ -139,6 +139,18 @@ Properties, all deliberate:
 - `tests/boundary.rs` — the guard.
 - Existing tripwires keep working: `wit_is_current` (WIT regeneration is mechanical via `wit.mjs`), the wasm dump equality, native-vs-wasm generated-output byte equality.
 - Performance: divan parse benches before/after on the real aggregate (`FORGE_SPEC`); `tests/wasm.rs::bench` re-run; forge-bench re-pinned upstream after merge.
+
+## Verification
+
+The implementation was checked against the unmodified engine on the released aggregate (`openapi.forge.json`, 27.6 MB, sha `99544617…`):
+
+- **Fern-keyed behavior.** The original, untouched suite — 379 parse tests written with Fern keys — passed against the new engine before any fixture was migrated.
+- **Generated output.** `forge --target ts` on the aggregate writes the same 3,381 files, byte for byte (`diff -r`).
+- **The model.** The full model dump (the repo's own `tests/wasm/dump.rs`: every group, method, availability, hidden flag, confirmation, extension and field name) is identical between the old and new engines: 197,702 lines, covering 3,021 availability values, 1,259 hidden flags, 217 confirmations and 4,695 extension entries. The generated TypeScript consumes none of those four, which is why the dump, not the output diff, is what proves them.
+- **Across the plugin boundary.** `tests/wasm.rs`, including the ignored `bench` on the aggregate, reports identical output and dump, native versus WASM, for 1,317 groups and 3,381 files; `wit_is_current` holds with the regenerated WIT.
+- **Independence.** `cargo test --no-default-features --features cli` (compat off) passes all 438 tests of the native suite; with compat on, 486 pass. Clippy is clean in the library-alone, compat-off and all-features configurations.
+- **The checks can fail.** Breaking the native-wins rule fails 8 compat tests; planting a vendor name in a doc comment fails the boundary test, naming the file and line.
+- **Performance** (parse and link of the aggregate, `cargo bench --bench parse`, six alternating runs against the unmodified code): fastest 40.8 ms against 40.3 ms (+1.2%), median 42.2 ms against 41.5 ms (+1.6%), peak memory 69.13 MB against 68.75 MB (+0.55%), the same peak allocation count. The cost is the dispatch of the ~15k extension keys through the native table and the adapters, and the provenance kept on each operation's definition. Parsing is under a tenth of a whole `forge` run on the aggregate (about 0.5 s), so the end-to-end change is about 0.1%.
 
 ## Release shape
 
