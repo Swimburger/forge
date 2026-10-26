@@ -10,7 +10,7 @@ fn aliased(aliases: &str, fields: &str) -> String {
         r#"{{
           "openapi": "3.0.3", "info": {{"title": "t", "version": "1"}},
           "paths": {{"/a/{{id}}/status": {{"patch": {{{fields}
-            "x-fern-sdk-group-name": ["a", "status"], "x-fern-sdk-method-name": "edit",
+            "x-forge-group": ["a", "status"], "x-forge-method": "edit",
             "x-forge-aliases": {aliases},
             "summary": "Edit status", "description": "Changes the status.",
             "parameters": [{{"name": "id", "in": "path", "required": true, "schema": {{"type": "string"}}}}],
@@ -39,8 +39,8 @@ fn methods(forge: &Forge) -> Vec<String> {
 }
 
 const PAUSE_AND_TERMINATE: &str = r#"[
-  {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause"},
-  {"x-fern-sdk-group-name": ["a"], "x-fern-sdk-method-name": "terminate"}
+  {"x-forge-group": ["a"], "x-forge-method": "pause"},
+  {"x-forge-group": ["a"], "x-forge-method": "terminate"}
 ]"#;
 
 #[test]
@@ -77,11 +77,11 @@ fn aliases_share_the_rest_of_the_operation() {
 fn each_alias_has_its_own_availability_hidden_confirmation_and_extensions() {
     let forge = parse(&aliased(
         r#"[
-          {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause",
-            "x-fern-availability": "generally-available", "x-forge-hidden": true,
+          {"x-forge-group": ["a"], "x-forge-method": "pause",
+            "x-forge-availability": "generally-available", "x-forge-hidden": true,
             "x-forge-params": {"status": {"default": "pause", "hidden": true}}},
-          {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "terminate",
-            "x-fern-availability": "beta", "x-forge-require-confirmation": "Sure?", "x-a": 1, "x-b": 2}
+          {"x-forge-group": ["a"], "x-forge-method": "terminate",
+            "x-forge-availability": "beta", "x-forge-require-confirmation": "Sure?", "x-a": 1, "x-b": 2}
         ]"#,
         "",
     ));
@@ -111,8 +111,8 @@ fn each_alias_has_its_own_availability_hidden_confirmation_and_extensions() {
 #[test]
 fn alias_does_not_fall_back_to_the_operation() {
     let forge = parse(&aliased(
-        r#"[{"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause"}]"#,
-        r#""x-fern-availability": "beta", "x-forge-hidden": true, "x-forge-require-confirmation": "Sure?",
+        r#"[{"x-forge-group": ["a"], "x-forge-method": "pause"}]"#,
+        r#""x-forge-availability": "beta", "x-forge-hidden": true, "x-forge-require-confirmation": "Sure?",
           "x-forge-params": {"status": {}},"#,
     ));
 
@@ -128,10 +128,10 @@ fn alias_does_not_fall_back_to_the_operation() {
 fn alias_without_a_group_or_name_is_not_a_method() {
     let forge = parse(&aliased(
         r#"[
-          {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause"},
-          {"x-fern-sdk-group-name": "a"},
-          {"x-fern-sdk-method-name": "resume"},
-          {"x-fern-sdk-group-name": "", "x-fern-sdk-method-name": "restart"}
+          {"x-forge-group": ["a"], "x-forge-method": "pause"},
+          {"x-forge-group": ["a"]},
+          {"x-forge-method": "resume"},
+          {"x-forge-group": [], "x-forge-method": "restart"}
         ]"#,
         "",
     ));
@@ -142,7 +142,7 @@ fn alias_without_a_group_or_name_is_not_a_method() {
 #[test]
 fn element_that_is_not_an_object_is_ignored() {
     let forge = parse(&aliased(
-        r#"["pause", null, 1, true, ["a"], {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause"}]"#,
+        r#"["pause", null, 1, true, ["a"], {"x-forge-group": ["a"], "x-forge-method": "pause"}]"#,
         "",
     ));
 
@@ -158,10 +158,7 @@ fn empty_aliases_make_no_method() {
 
 #[test]
 fn aliases_that_are_not_an_array_are_an_error() {
-    let err = parse_err(&aliased(
-        r#"{"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause"}"#,
-        "",
-    ));
+    let err = parse_err(&aliased(r#"{"x-forge-group": ["a"], "x-forge-method": "pause"}"#, ""));
 
     assert!(err.contains("an array of aliases"), "{err}");
 }
@@ -172,11 +169,11 @@ fn alias_and_another_method_with_equal_names_are_an_error() {
         r#"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {
-            "/a": {"get": {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause",
+            "/a": {"get": {"x-forge-group": ["a"], "x-forge-method": "pause",
               "responses": {"204": {"description": "ok"}}}},
             "/b": {"post": {"x-forge-aliases": [
-              {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "resume"},
-              {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "Pause"}
+              {"x-forge-group": ["a"], "x-forge-method": "resume"},
+              {"x-forge-group": ["a"], "x-forge-method": "Pause"}
             ], "responses": {"204": {"description": "ok"}}}}
           }
         }"#,
@@ -192,8 +189,8 @@ fn alias_and_another_method_with_equal_names_are_an_error() {
 fn two_aliases_with_equal_names_are_an_error() {
     let err = parse_err(&aliased(
         r#"[
-          {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause"},
-          {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause"}
+          {"x-forge-group": ["a"], "x-forge-method": "pause"},
+          {"x-forge-group": ["a"], "x-forge-method": "pause"}
         ]"#,
         "",
     ));
@@ -207,12 +204,12 @@ fn two_aliases_with_equal_names_are_an_error() {
 #[test]
 fn alias_group_name_without_letters_is_an_error_naming_the_alias() {
     let err = parse_err(&aliased(
-        r#"[{"x-fern-sdk-group-name": "a..b", "x-fern-sdk-method-name": "pause"}]"#,
+        r#"[{"x-forge-group": ["a", "", "b"], "x-forge-method": "pause"}]"#,
         "",
     ));
 
     assert!(
-        err.contains("PATCH /a/{id}/status: x-forge-aliases[0]: x-fern-sdk-group-name"),
+        err.contains("PATCH /a/{id}/status: x-forge-aliases[0]: x-forge-group"),
         "{err}"
     );
 }
@@ -220,12 +217,12 @@ fn alias_group_name_without_letters_is_an_error_naming_the_alias() {
 #[test]
 fn alias_availability_is_checked() {
     let err = parse_err(&aliased(
-        r#"[1, {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause", "x-fern-availability": "ga"}]"#,
+        r#"[1, {"x-forge-group": ["a"], "x-forge-method": "pause", "x-forge-availability": "ga"}]"#,
         "",
     ));
 
     assert!(
-        err.contains(r#"x-forge-aliases[1]: x-fern-availability "ga" is not"#),
+        err.contains(r#"x-forge-aliases[1]: x-forge-availability "ga" is not"#),
         "{err}"
     );
 }
@@ -233,16 +230,16 @@ fn alias_availability_is_checked() {
 #[test]
 fn repeated_key_forge_reads_in_an_alias_is_an_error() {
     let err = parse_err(&aliased(
-        r#"[{"x-fern-sdk-method-name": "pause", "x-fern-sdk-method-name": "resume"}]"#,
+        r#"[{"x-forge-method": "pause", "x-forge-method": "resume"}]"#,
         "",
     ));
 
-    assert!(err.contains("duplicate field `x-fern-sdk-method-name`"), "{err}");
+    assert!(err.contains("duplicate field `x-forge-method`"), "{err}");
 }
 
 #[test]
 fn ignored_operation_still_has_its_aliases() {
-    let forge = parse(&aliased(PAUSE_AND_TERMINATE, r#""x-fern-ignore": true,"#));
+    let forge = parse(&aliased(PAUSE_AND_TERMINATE, r#""x-forge-ignore": true,"#));
 
     assert_eq!(methods(&forge), ["a.pause", "a.terminate"]);
 }
@@ -251,8 +248,8 @@ fn ignored_operation_still_has_its_aliases() {
 fn ignored_alias_is_not_a_method() {
     let forge = parse(&aliased(
         r#"[
-          {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause", "x-fern-ignore": true},
-          {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "terminate", "x-fern-ignore": false}
+          {"x-forge-group": ["a"], "x-forge-method": "pause", "x-forge-ignore": true},
+          {"x-forge-group": ["a"], "x-forge-method": "terminate", "x-forge-ignore": false}
         ]"#,
         "",
     ));
@@ -263,8 +260,8 @@ fn ignored_alias_is_not_a_method() {
 #[test]
 fn aliases_are_not_extensions() {
     let forge = parse(&aliased(
-        r#"[{"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause", "x-a": 1,
-             "x-forge-aliases": [{"x-fern-sdk-group-name": "b", "x-fern-sdk-method-name": "nested"}]}]"#,
+        r#"[{"x-forge-group": ["a"], "x-forge-method": "pause", "x-a": 1,
+             "x-forge-aliases": [{"x-forge-group": ["b"], "x-forge-method": "nested"}]}]"#,
         "",
     ));
 
@@ -277,7 +274,7 @@ fn aliases_are_not_extensions() {
 #[test]
 fn keys_of_an_alias_that_are_not_extensions_are_ignored() {
     let forge = parse(&aliased(
-        r#"[{"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "pause",
+        r#"[{"x-forge-group": ["a"], "x-forge-method": "pause",
              "summary": "Pause", "deprecated": false, "path": "/b"}]"#,
         "",
     ));
@@ -293,7 +290,7 @@ fn operation_without_aliases_keeps_its_own_method() {
     let forge = parse(
         r#"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"get": {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "get",
+          "paths": {"/a": {"get": {"x-forge-group": ["a"], "x-forge-method": "get",
             "responses": {"204": {"description": "ok"}}}}}
         }"#,
     );
@@ -307,10 +304,10 @@ fn model_used_by_aliases_in_two_top_level_groups_is_at_the_top_level() {
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {"/m": {"get": {
-            "x-fern-sdk-group-name": "a.b", "x-fern-sdk-method-name": "get",
+            "x-forge-group": ["a", "b"], "x-forge-method": "get",
             "x-forge-aliases": [
-              {"x-fern-sdk-group-name": "a.b", "x-fern-sdk-method-name": "get"},
-              {"x-fern-sdk-group-name": "x", "x-fern-sdk-method-name": "get"}
+              {"x-forge-group": ["a", "b"], "x-forge-method": "get"},
+              {"x-forge-group": ["x"], "x-forge-method": "get"}
             ],
             "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/M"}}}}}}}},
           "components": {"schemas": {"M": {"type": "object", "properties": {"id": {"type": "string"}}}}}
@@ -328,10 +325,10 @@ fn model_used_by_aliases_in_one_group_is_in_that_group() {
         r##"{
           "openapi": "3.0.3", "info": {"title": "t", "version": "1"},
           "paths": {"/m": {"get": {
-            "x-fern-sdk-group-name": "x", "x-fern-sdk-method-name": "get",
+            "x-forge-group": ["x"], "x-forge-method": "get",
             "x-forge-aliases": [
-              {"x-fern-sdk-group-name": "a.b", "x-fern-sdk-method-name": "get"},
-              {"x-fern-sdk-group-name": "a.c", "x-fern-sdk-method-name": "get"}
+              {"x-forge-group": ["a", "b"], "x-forge-method": "get"},
+              {"x-forge-group": ["a", "c"], "x-forge-method": "get"}
             ],
             "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/M"}}}}}}}},
           "components": {"schemas": {"M": {"type": "object", "properties": {"id": {"type": "string"}}}}}

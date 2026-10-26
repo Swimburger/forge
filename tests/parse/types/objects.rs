@@ -38,7 +38,7 @@ fn required_names_without_a_property_are_ignored() {
 #[test]
 fn field_is_named_by_x_fern_property_name() {
     let forge = parse(&responding_with(
-        r#"{"type": "object", "properties": {"owner": {"type": "string", "x-fern-property-name": "person"}}}"#,
+        r#"{"type": "object", "properties": {"owner": {"type": "string", "x-forge-property-name": "person"}}}"#,
     ));
 
     let owner = field(object(response_type(&forge, "a.get")), "owner");
@@ -195,7 +195,7 @@ fn pattern_properties_are_ignored() {
     let forge = parse(
         r#"{
           "openapi": "3.1.0", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"get": {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "get",
+          "paths": {"/a": {"get": {"x-forge-group": ["a"], "x-forge-method": "get",
             "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {
               "type": "object", "properties": {"id": {"type": "string"}}, "patternProperties": {"^x-": {"type": "string"}}
             }}}}}}}}
@@ -212,7 +212,7 @@ fn false_property_is_no_field() {
     let forge = parse(
         r#"{
           "openapi": "3.1.0", "info": {"title": "t", "version": "1"},
-          "paths": {"/a": {"get": {"x-fern-sdk-group-name": "a", "x-fern-sdk-method-name": "get",
+          "paths": {"/a": {"get": {"x-forge-group": ["a"], "x-forge-method": "get",
             "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {
               "type": "object", "properties": {"id": {"type": "string"}, "gone": false}
             }}}}}}}}
@@ -223,9 +223,9 @@ fn false_property_is_no_field() {
 }
 
 #[test]
-fn property_skipped_by_x_stainless_skip_is_no_field() {
+fn property_ignored_by_x_forge_ignore_is_no_field() {
     let forge = parse(&responding_with(
-        r#"{"type": "object", "properties": {"id": {"type": "string"}, "old_id": {"type": "string", "x-stainless-skip": true}}}"#,
+        r#"{"type": "object", "properties": {"id": {"type": "string"}, "old_id": {"type": "string", "x-forge-ignore": true}}}"#,
     ));
 
     assert_eq!(field_names(object(response_type(&forge, "a.get"))), ["id"]);

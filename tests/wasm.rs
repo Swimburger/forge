@@ -41,7 +41,7 @@ const SPEC: &str = r##"{
   "paths": {
     "/pets": {
       "get": {
-        "x-fern-sdk-group-name": "pets", "x-fern-sdk-method-name": "list", "summary": "Lists pets.",
+        "x-forge-group": ["pets"], "x-forge-method": "list", "summary": "Lists pets.",
         "parameters": [
           {"name": "limit", "in": "query", "schema": {"type": "integer", "format": "int32"}},
           {"name": "tags", "in": "query", "explode": false, "schema": {"type": "array", "items": {"type": "string"}}}
@@ -52,14 +52,14 @@ const SPEC: &str = r##"{
         }
       },
       "post": {
-        "x-fern-sdk-group-name": "pets", "x-fern-sdk-method-name": "create", "deprecated": true,
+        "x-forge-group": ["pets"], "x-forge-method": "create", "deprecated": true,
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/NewPet"}}}},
         "responses": {"201": {"description": "created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}}}
       }
     },
     "/pets/{pet_id}": {
       "get": {
-        "x-fern-sdk-group-name": "pets", "x-fern-sdk-method-name": "get",
+        "x-forge-group": ["pets"], "x-forge-method": "get",
         "parameters": [{"name": "pet_id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
         "responses": {
           "200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}},
@@ -69,7 +69,7 @@ const SPEC: &str = r##"{
     },
     "/pets/{pet_id}/photos": {
       "put": {
-        "x-fern-sdk-group-name": "pets.photos", "x-fern-sdk-method-name": "upload",
+        "x-forge-group": ["pets", "photos"], "x-forge-method": "upload",
         "parameters": [{"name": "pet_id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "requestBody": {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
         "responses": {"204": {"description": "done"}}
@@ -77,7 +77,7 @@ const SPEC: &str = r##"{
     },
     "/owners": {
       "get": {
-        "x-fern-sdk-group-name": "owners", "x-fern-sdk-method-name": "list",
+        "x-forge-group": ["owners"], "x-forge-method": "list",
         "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {
           "type": "object",
           "properties": {
@@ -138,8 +138,8 @@ const FEATURES: &str = r##"{
     "/pets/{id}": {
       "parameters": [{"name": "X-Trace", "in": "header", "schema": {"type": "string"}}],
       "get": {
-        "x-fern-sdk-group-name": "pets", "x-fern-sdk-method-name": "get",
-        "x-fern-availability": "beta", "x-forge-hidden": true,
+        "x-forge-group": ["pets"], "x-forge-method": "get",
+        "x-forge-availability": "beta", "x-forge-hidden": true,
         "x-custom": {"b": 1, "a": [1.5, "two \"quoted\"\n", null, true, {}], "b": 2},
         "x-flag": false, "x-count": 9007199254740993, "x-text": "é 😀",
         "parameters": [
@@ -152,9 +152,9 @@ const FEATURES: &str = r##"{
       },
       "delete": {
         "x-forge-aliases": [
-          {"x-fern-sdk-group-name": "pets", "x-fern-sdk-method-name": "remove", "x-fern-availability": "deprecated",
+          {"x-forge-group": ["pets"], "x-forge-method": "remove", "x-forge-availability": "deprecated",
             "x-forge-require-confirmation": "This deletes the pet.", "x-alias": [1]},
-          {"x-fern-sdk-group-name": "admin.pets", "x-fern-sdk-method-name": "delete", "x-forge-require-confirmation": ""}
+          {"x-forge-group": ["admin", "pets"], "x-forge-method": "delete", "x-forge-require-confirmation": ""}
         ],
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "responses": {"204": {"description": "gone"}}
@@ -162,7 +162,7 @@ const FEATURES: &str = r##"{
     },
     "/pets/{id}/photo": {
       "put": {
-        "x-fern-sdk-group-name": "pets.photos", "x-fern-sdk-method-name": "upload",
+        "x-forge-group": ["pets", "photos"], "x-forge-method": "upload",
         "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "requestBody": {"required": true, "content": {
           "application/octet-stream": {"schema": {"type": "string", "format": "binary", "description": "The photo."}},
