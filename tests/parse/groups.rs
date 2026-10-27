@@ -1,4 +1,4 @@
-use forge::{Group, Name};
+use forge::{Forge, Group, Name};
 
 use crate::common::{group, method, parse, parse_err};
 
@@ -59,6 +59,65 @@ fn array_element_with_a_dot_is_one_group() {
     };
     assert_eq!(settings.name(), &Name::new("zones.settings"));
     assert_eq!(settings.parent(), None);
+}
+
+/// Returns a document with one method, `GET /a`, whose group path is written
+/// as `group`.
+fn method_in(group: &str) -> String {
+    format!(
+        r#"{{
+          "openapi": "3.0.3", "info": {{"title": "t", "version": "1"}},
+          "paths": {{"/a": {{"get": {{"x-forge-group-name": {group}, "x-forge-method-name": "get",
+            "responses": {{"204": {{"description": "ok"}}}}}}}}}}
+        }}"#
+    )
+}
+
+/// Returns the one group that has a method, where the group path put it.
+#[track_caller]
+fn group_with_the_method(forge: &Forge) -> Group<'_> {
+    let mut groups = forge.groups().filter(|group| group.methods().count() > 0);
+    let (Some(group), None) = (groups.next(), groups.next()) else {
+        panic!(
+            "want one group with methods, got {:?}",
+            forge.groups().collect::<Vec<_>>()
+        );
+    };
+    group
+}
+
+/// A string is names separated by dots, and an array is the names, which are
+/// not split, so a dot in an array's name stays in it.
+#[test]
+fn a_dotted_string_is_split_and_a_name_in_an_array_is_not() {
+    for (written, names) in [
+        (r#""a.b""#, vec!["a", "b"]),
+        (r#""a.b.c""#, vec!["a", "b", "c"]),
+        (r#"["a", "b"]"#, vec!["a", "b"]),
+        (r#"["a.b"]"#, vec!["a.b"]),
+        (r#"["a.b", "c"]"#, vec!["a.b", "c"]),
+        (r#"["a", "b.c"]"#, vec!["a", "b.c"]),
+        (r#"["a.b", "c.d"]"#, vec!["a.b", "c.d"]),
+    ] {
+        let forge = parse(&method_in(written));
+
+        let want: Vec<Name> = names.iter().map(|name| Name::new(name)).collect();
+        assert!(
+            group_with_the_method(&forge).path().eq(want.iter()),
+            "{written} is not the path {names:?}"
+        );
+    }
+}
+
+#[test]
+fn a_dotted_string_and_an_array_with_that_name_are_different_groups() {
+    let string = parse(&method_in(r#""zones.settings""#));
+    let array = parse(&method_in(r#"["zones.settings"]"#));
+
+    assert_eq!(group_with_the_method(&string).path().count(), 2);
+    assert_eq!(group_with_the_method(&array).path().count(), 1);
+    assert_eq!(string.groups().count(), 2, "zones and zones.settings");
+    assert_eq!(array.groups().count(), 1);
 }
 
 #[test]
@@ -171,7 +230,13 @@ fn skipped_operation_is_not_a_method() {
 
 #[test]
 fn group_name_without_letters_is_an_error() {
-    for group in [r#"["accounts", "", "members"]"#, r#""accounts..members""#] {
+    for group in [
+        r#"["accounts", "", "members"]"#,
+        r#""accounts..members""#,
+        r#"".accounts""#,
+        r#""accounts.""#,
+        r#"".""#,
+    ] {
         let err = parse_err(&format!(
             r#"{{
               "openapi": "3.0.3", "info": {{"title": "t", "version": "1"}},

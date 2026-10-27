@@ -1,4 +1,4 @@
-use forge::{Availability, Forge, HttpMethod, Json, Scalar};
+use forge::{Availability, Forge, HttpMethod, Json, Name, Scalar};
 
 use crate::common::{field_names, group, intersection, method, model, object, parse, parse_err, scalar};
 
@@ -48,6 +48,26 @@ fn each_alias_is_a_method_and_the_operation_is_not() {
     let forge = parse(&aliased(PAUSE_AND_TERMINATE, ""));
 
     assert_eq!(methods(&forge), ["a.pause", "a.terminate"]);
+}
+
+#[test]
+fn an_alias_group_is_split_on_dots_only_when_it_is_a_string() {
+    let forge = parse(&aliased(
+        r#"[
+          {"x-forge-group-name": "a.b", "x-forge-method-name": "pause"},
+          {"x-forge-group-name": ["a.b"], "x-forge-method-name": "stop"}
+        ]"#,
+        "",
+    ));
+
+    let in_group = |names: &[&str], method: &str| {
+        let want: Vec<Name> = names.iter().map(|name| Name::new(name)).collect();
+        let group = forge.groups().find(|group| group.path().eq(want.iter())).unwrap();
+        group.methods().any(|m| *m.name() == Name::new(method))
+    };
+    assert!(in_group(&["a", "b"], "pause"), "a string is two groups");
+    assert!(in_group(&["a.b"], "stop"), "an array's name is one group");
+    assert!(!in_group(&["a", "b"], "stop"));
 }
 
 #[test]

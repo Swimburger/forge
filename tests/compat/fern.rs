@@ -47,6 +47,27 @@ fn a_group_written_as_an_array_is_not_split() {
     );
 }
 
+/// A group path is names separated by dots when it is a string, as for the
+/// native key, and the names of an array, which are not split, when it is not.
+#[test]
+fn a_group_is_split_on_dots_only_when_it_is_a_string() {
+    for (written, names) in [
+        (r#""a.b""#, vec!["a", "b"]),
+        (r#"["a", "b"]"#, vec!["a", "b"]),
+        (r#"["a.b"]"#, vec!["a.b"]),
+        (r#"["a.b", "c"]"#, vec!["a.b", "c"]),
+        (r#"["a", "b.c"]"#, vec!["a", "b.c"]),
+    ] {
+        let forge = parse(&operation_with(&format!(
+            r#""x-fern-sdk-group-name": {written}, "x-fern-sdk-method-name": "get","#
+        )));
+
+        let leaf = forge.groups().find(|group| group.methods().count() > 0).unwrap();
+        let want: Vec<forge::Name> = names.iter().map(|name| forge::Name::new(name)).collect();
+        assert!(leaf.path().eq(want.iter()), "{written} is not the path {names:?}");
+    }
+}
+
 #[test]
 fn an_empty_group_string_is_no_group_and_so_no_method() {
     let forge = parse(&operation_with(
