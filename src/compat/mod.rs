@@ -10,10 +10,14 @@
 //!
 //! The layer is built only with the `compat` feature, and is meant to go:
 //! once nobody writes these keys, deleting this folder and the calls to it in
-//! `link/resolve.rs` changes nothing about what any native extension means. The keys are read in place of a native key only when there is none,
-//! as `link` decides.
+//! `link/resolve.rs` changes nothing about what any native extension means.
+//! The keys are read in place of a native key only when there is none, as
+//! `link` decides. `forge normalize` is built on these tables, and goes with
+//! them.
 
 mod fern;
+#[cfg(all(test, feature = "normalize"))]
+mod normalize_tests;
 mod stainless;
 
 use crate::metadata::{DefinitionField, Hit, ParameterField, SchemaField};

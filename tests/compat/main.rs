@@ -10,6 +10,11 @@
 //! which has no vendor names in it, runs without it.
 
 mod common;
+#[cfg(feature = "normalize")]
+#[path = "../wasm/dump.rs"]
+mod dump;
 mod fern;
 mod native_first;
+#[cfg(feature = "normalize")]
+mod normalize;
 mod stainless;

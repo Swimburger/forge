@@ -194,6 +194,19 @@ pub(crate) mod definition {
     /// The names of the native keys of an operation or an alias, by slot.
     pub(crate) const NAMES: [&str; 6] = [METHOD_NAME, GROUP_NAME, SKIP, AVAILABILITY, HIDDEN, CONFIRMATION];
 
+    /// Returns the native key that says what `field` says.
+    #[cfg(feature = "normalize")]
+    pub(crate) fn key(field: DefinitionField) -> &'static str {
+        match field {
+            DefinitionField::Method => METHOD_NAME,
+            DefinitionField::Group => GROUP_NAME,
+            DefinitionField::Skip(_) => SKIP,
+            DefinitionField::Availability => AVAILABILITY,
+            DefinitionField::Hidden => HIDDEN,
+            DefinitionField::Confirmation => CONFIRMATION,
+        }
+    }
+
     /// Returns what `key` says on an operation or an alias, if it is a native
     /// key of one.
     pub(crate) fn read(key: &str) -> Option<Hit<DefinitionField>> {
@@ -220,6 +233,14 @@ pub(crate) mod parameter {
 
     /// The names of the native keys of a Parameter Object, by slot.
     pub(crate) const NAMES: [&str; 1] = [NAME];
+
+    /// Returns the native key that says what `field` says.
+    #[cfg(feature = "normalize")]
+    pub(crate) fn key(field: ParameterField) -> &'static str {
+        match field {
+            ParameterField::Name => NAME,
+        }
+    }
 
     /// Returns what `key` says on a Parameter Object, if it is a native key of
     /// one.
@@ -249,6 +270,17 @@ pub(crate) mod schema {
 
     /// The names of the native keys of a Schema Object, by slot.
     pub(crate) const NAMES: [&str; 5] = [MODEL_NAME, PROPERTY_NAME, SKIP, SENSITIVE, DEPRECATED_SENSITIVE];
+
+    /// Returns the native key that says what `field` says.
+    #[cfg(feature = "normalize")]
+    pub(crate) fn key(field: SchemaField) -> &'static str {
+        match field {
+            SchemaField::ModelName => MODEL_NAME,
+            SchemaField::PropertyName => PROPERTY_NAME,
+            SchemaField::Skip(_) => SKIP,
+            SchemaField::Sensitive => SENSITIVE,
+        }
+    }
 
     /// Returns what `key` says on a Schema Object, if it is a native key of one.
     pub(crate) fn read(key: &str) -> Option<Hit<SchemaField>> {
@@ -378,6 +410,36 @@ mod tests {
         assert_one_key_per_tier(parameters, parameter::read);
         assert_one_key_per_tier(schemas, schema::read);
         assert_one_key_per_tier(documents, document::read);
+    }
+
+    #[cfg(feature = "normalize")]
+    #[test]
+    fn each_field_is_said_by_the_native_key_that_reads_as_it() {
+        use std::mem::discriminant as same;
+
+        for field in [
+            DefinitionField::Method,
+            DefinitionField::Group,
+            DefinitionField::Skip(BoolFormat::Bool),
+            DefinitionField::Availability,
+            DefinitionField::Hidden,
+            DefinitionField::Confirmation,
+        ] {
+            let hit = definition::read(definition::key(field)).unwrap();
+            assert!(same(&hit.field) == same(&field) && hit.tier == Tier::Native);
+        }
+        let hit = parameter::read(parameter::key(ParameterField::Name)).unwrap();
+        assert!(matches!(hit.field, ParameterField::Name) && hit.tier == Tier::Native);
+        for field in [
+            SchemaField::ModelName,
+            SchemaField::PropertyName,
+            SchemaField::Skip(BoolFormat::Bool),
+            SchemaField::Sensitive,
+        ] {
+            let hit = schema::read(schema::key(field)).unwrap();
+            assert!(same(&hit.field) == same(&field) && hit.tier == Tier::Native);
+        }
+        assert_eq!(schema::read("x-sensitive").unwrap().tier, Tier::Deprecated);
     }
 
     #[test]
