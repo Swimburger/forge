@@ -21,49 +21,52 @@ use crate::metadata::{DefinitionField, Hit, ParameterField, SchemaField};
 /// Returns what `key` says on an operation or an alias, if an adapter reads
 /// it there.
 pub(crate) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
-    fern::definition(key)
+    fern::definition::read(key)
 }
 
 /// Returns what `key` says on a Parameter Object, if an adapter reads it
 /// there.
 pub(crate) fn parameter(key: &str) -> Option<Hit<ParameterField>> {
-    fern::parameter(key)
+    fern::parameter::read(key)
 }
 
 /// Returns what `key` says on a Schema Object, if an adapter reads it there.
 /// Each adapter counts its keys from zero, so Stainless's come after Fern's.
 pub(crate) fn schema(key: &str) -> Option<Hit<SchemaField>> {
-    fern::schema(key).or_else(|| stainless::schema(key).map(|hit| hit.after(FERN_SCHEMA_KEYS)))
+    fern::schema::read(key).or_else(|| stainless::schema::read(key).map(|hit| hit.after(FERN_SCHEMA_KEYS)))
 }
 
 /// How many keys of a Schema Object Fern has, which is where Stainless's
 /// start.
-const FERN_SCHEMA_KEYS: u8 = fern::SCHEMA_NAMES.len() as u8;
+const FERN_SCHEMA_KEYS: u8 = fern::schema::NAMES.len() as u8;
 
 /// Returns the name of the key of an operation or an alias that is `n`th
 /// among the keys of the adapters.
 pub(crate) fn definition_name(n: u8) -> &'static str {
-    fern::DEFINITION_NAMES[usize::from(n)]
+    fern::definition::NAMES[usize::from(n)]
 }
 
 /// Returns the name of the key of a Parameter Object that is `n`th among the
 /// keys of the adapters.
 pub(crate) fn parameter_name(n: u8) -> &'static str {
-    fern::PARAMETER_NAMES[usize::from(n)]
+    fern::parameter::NAMES[usize::from(n)]
 }
 
 /// Returns the name of the key of a Schema Object that is `n`th among the
 /// keys of the adapters.
 pub(crate) fn schema_name(n: u8) -> &'static str {
     match n.checked_sub(FERN_SCHEMA_KEYS) {
-        None => fern::SCHEMA_NAMES[usize::from(n)],
-        Some(n) => stainless::SCHEMA_NAMES[usize::from(n)],
+        None => fern::schema::NAMES[usize::from(n)],
+        Some(n) => stainless::schema::NAMES[usize::from(n)],
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The names of the keys of a level, and whether the level reads a key.
+    type Level<'a> = (&'a [&'a str], fn(&str) -> bool);
     use crate::metadata::{self, COMPAT_SLOTS, Tier};
 
     /// Asserts that each key in `names` is read by `read` as a key that is
@@ -79,10 +82,29 @@ mod tests {
 
     #[test]
     fn each_key_of_each_adapter_is_named_by_its_slot() {
-        read_as_itself(&fern::DEFINITION_NAMES, definition, definition_name);
-        read_as_itself(&fern::PARAMETER_NAMES, parameter, parameter_name);
-        read_as_itself(&fern::SCHEMA_NAMES, schema, schema_name);
-        read_as_itself(&stainless::SCHEMA_NAMES, schema, schema_name);
+        read_as_itself(&fern::definition::NAMES, definition, definition_name);
+        read_as_itself(&fern::parameter::NAMES, parameter, parameter_name);
+        read_as_itself(&fern::schema::NAMES, schema, schema_name);
+        read_as_itself(&stainless::schema::NAMES, schema, schema_name);
+    }
+
+    #[test]
+    fn a_key_of_an_adapter_is_read_only_at_its_level() {
+        let definitions = fern::definition::NAMES.to_vec();
+        let parameters = fern::parameter::NAMES.to_vec();
+        let schemas = [&fern::schema::NAMES[..], &stainless::schema::NAMES[..]].concat();
+        let levels: [Level; 3] = [
+            (&definitions, |key| definition(key).is_some()),
+            (&parameters, |key| parameter(key).is_some()),
+            (&schemas, |key| schema(key).is_some()),
+        ];
+        for (own, _) in levels {
+            for &key in own {
+                for (names, reads) in levels {
+                    assert_eq!(reads(key), names.contains(&key), "{key}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -95,25 +117,27 @@ mod tests {
                 .copied()
                 .collect()
         };
-        let definitions = keys(&metadata::DEFINITION_NAMES, &[&fern::DEFINITION_NAMES]);
-        let parameters = keys(&metadata::PARAMETER_NAMES, &[&fern::PARAMETER_NAMES]);
+        let definitions = keys(&metadata::definition::NAMES, &[&fern::definition::NAMES]);
+        let parameters = keys(&metadata::parameter::NAMES, &[&fern::parameter::NAMES]);
         let schemas = keys(
-            &metadata::SCHEMA_NAMES,
-            &[&fern::SCHEMA_NAMES, &stainless::SCHEMA_NAMES],
+            &metadata::schema::NAMES,
+            &[&fern::schema::NAMES, &stainless::schema::NAMES],
         );
 
         metadata::assert_one_key_per_tier(&definitions, |key| {
-            metadata::definition(key).or_else(|| definition(key))
+            metadata::definition::read(key).or_else(|| definition(key))
         });
-        metadata::assert_one_key_per_tier(&parameters, |key| metadata::parameter(key).or_else(|| parameter(key)));
-        metadata::assert_one_key_per_tier(&schemas, |key| metadata::schema(key).or_else(|| schema(key)));
+        metadata::assert_one_key_per_tier(&parameters, |key| {
+            metadata::parameter::read(key).or_else(|| parameter(key))
+        });
+        metadata::assert_one_key_per_tier(&schemas, |key| metadata::schema::read(key).or_else(|| schema(key)));
     }
 
     #[test]
     fn the_slots_of_the_adapters_do_not_collide_and_fit_in_a_set() {
-        let mut slots: Vec<u8> = fern::SCHEMA_NAMES
+        let mut slots: Vec<u8> = fern::schema::NAMES
             .iter()
-            .chain(&stainless::SCHEMA_NAMES)
+            .chain(&stainless::schema::NAMES)
             .map(|key| schema(key).unwrap().slot)
             .collect();
         let len = slots.len();

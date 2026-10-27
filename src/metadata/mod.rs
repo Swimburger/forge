@@ -175,91 +175,118 @@ pub(crate) enum BoolFormat {
     BoolOrTargets,
 }
 
-/// Returns what `key` says on an operation or an alias, if it is a native
-/// key of one.
-pub(crate) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
-    if !key.starts_with(PREFIX) {
-        return None;
-    }
-    Some(match key {
-        METHOD_NAME => Hit::native(DefinitionField::Method, 0),
-        GROUP_NAME => Hit::native(DefinitionField::Group, 1),
-        SKIP => Hit::native(DefinitionField::Skip(BoolFormat::Bool), 2),
-        AVAILABILITY => Hit::native(DefinitionField::Availability, 3),
-        HIDDEN => Hit::native(DefinitionField::Hidden, 4),
-        CONFIRMATION => Hit::native(DefinitionField::Confirmation, 5),
-        _ => return None,
-    })
-}
-
-const METHOD_NAME: &str = "x-forge-method-name";
-const GROUP_NAME: &str = "x-forge-group-name";
-const SKIP: &str = "x-forge-skip";
-const AVAILABILITY: &str = "x-forge-availability";
-const HIDDEN: &str = "x-forge-hidden";
-const CONFIRMATION: &str = "x-forge-require-confirmation";
-const PARAMETER_NAME: &str = "x-forge-parameter-name";
-const MODEL_NAME: &str = "x-forge-model-name";
-const PROPERTY_NAME: &str = "x-forge-property-name";
-const SENSITIVE: &str = "x-forge-sensitive";
-/// The old name of `x-forge-sensitive`, from before every native key began
-/// with `x-forge-`. Deprecated: it is read only where `x-forge-sensitive` is
-/// not written.
-const DEPRECATED_SENSITIVE: &str = "x-sensitive";
-const COMMANDS: &str = "x-forge-commands";
-
-/// The names of the native keys of an operation or an alias, by slot.
-pub(crate) const DEFINITION_NAMES: [&str; 6] = [METHOD_NAME, GROUP_NAME, SKIP, AVAILABILITY, HIDDEN, CONFIRMATION];
-/// The names of the native keys of a Parameter Object, by slot.
-pub(crate) const PARAMETER_NAMES: [&str; 1] = [PARAMETER_NAME];
-/// The names of the native keys of a Schema Object, by slot.
-pub(crate) const SCHEMA_NAMES: [&str; 5] = [MODEL_NAME, PROPERTY_NAME, SKIP, SENSITIVE, DEPRECATED_SENSITIVE];
-/// The names of the native keys of the document, by slot.
-pub(crate) const DOCUMENT_NAMES: [&str; 1] = [COMMANDS];
-
 /// Returns whether `key` is the `x-forge-aliases` of an operation.
 pub(crate) fn is_aliases(key: &str) -> bool {
     key == ALIASES
 }
 
-/// Returns what `key` says on a Parameter Object, if it is a native key of
-/// one.
-pub(crate) fn parameter(key: &str) -> Option<Hit<ParameterField>> {
-    if !key.starts_with(PREFIX) {
-        return None;
+/// The native keys of an operation, or of an alias in its `x-forge-aliases`.
+pub(crate) mod definition {
+    use super::{BoolFormat, DefinitionField, Hit, PREFIX};
+
+    const METHOD_NAME: &str = "x-forge-method-name";
+    const GROUP_NAME: &str = "x-forge-group-name";
+    const SKIP: &str = "x-forge-skip";
+    const AVAILABILITY: &str = "x-forge-availability";
+    const HIDDEN: &str = "x-forge-hidden";
+    const CONFIRMATION: &str = "x-forge-require-confirmation";
+
+    /// The names of the native keys of an operation or an alias, by slot.
+    pub(crate) const NAMES: [&str; 6] = [METHOD_NAME, GROUP_NAME, SKIP, AVAILABILITY, HIDDEN, CONFIRMATION];
+
+    /// Returns what `key` says on an operation or an alias, if it is a native
+    /// key of one.
+    pub(crate) fn read(key: &str) -> Option<Hit<DefinitionField>> {
+        if !key.starts_with(PREFIX) {
+            return None;
+        }
+        Some(match key {
+            METHOD_NAME => Hit::native(DefinitionField::Method, 0),
+            GROUP_NAME => Hit::native(DefinitionField::Group, 1),
+            SKIP => Hit::native(DefinitionField::Skip(BoolFormat::Bool), 2),
+            AVAILABILITY => Hit::native(DefinitionField::Availability, 3),
+            HIDDEN => Hit::native(DefinitionField::Hidden, 4),
+            CONFIRMATION => Hit::native(DefinitionField::Confirmation, 5),
+            _ => return None,
+        })
     }
-    Some(match key {
-        PARAMETER_NAME => Hit::native(ParameterField::Name, 0),
-        _ => return None,
-    })
 }
 
-/// Returns what `key` says on a Schema Object, if it is a native key of one.
-pub(crate) fn schema(key: &str) -> Option<Hit<SchemaField>> {
-    // `x-sensitive` is the one native key outside the prefix.
-    if !key.starts_with(PREFIX) && key != DEPRECATED_SENSITIVE {
-        return None;
+/// The native keys of a Parameter Object.
+pub(crate) mod parameter {
+    use super::{Hit, PREFIX, ParameterField};
+
+    const NAME: &str = "x-forge-parameter-name";
+
+    /// The names of the native keys of a Parameter Object, by slot.
+    pub(crate) const NAMES: [&str; 1] = [NAME];
+
+    /// Returns what `key` says on a Parameter Object, if it is a native key of
+    /// one.
+    pub(crate) fn read(key: &str) -> Option<Hit<ParameterField>> {
+        if !key.starts_with(PREFIX) {
+            return None;
+        }
+        Some(match key {
+            NAME => Hit::native(ParameterField::Name, 0),
+            _ => return None,
+        })
     }
-    Some(match key {
-        MODEL_NAME => Hit::native(SchemaField::ModelName, 0),
-        PROPERTY_NAME => Hit::native(SchemaField::PropertyName, 1),
-        SKIP => Hit::native(SchemaField::Skip(BoolFormat::Bool), 2),
-        SENSITIVE => Hit::native(SchemaField::Sensitive, 3),
-        DEPRECATED_SENSITIVE => Hit::deprecated(SchemaField::Sensitive, 4),
-        _ => return None,
-    })
 }
 
-/// Returns what `key` says at the root of the document, if it is a native
-/// key of it.
-pub(crate) fn document(key: &str) -> Option<Hit<DocumentField>> {
-    if !key.starts_with(PREFIX) {
-        return None;
+/// The native keys of a Schema Object.
+pub(crate) mod schema {
+    use super::{BoolFormat, Hit, PREFIX, SchemaField};
+
+    const MODEL_NAME: &str = "x-forge-model-name";
+    const PROPERTY_NAME: &str = "x-forge-property-name";
+    const SKIP: &str = "x-forge-skip";
+    const SENSITIVE: &str = "x-forge-sensitive";
+    /// The old name of `x-forge-sensitive`, from before every native key began
+    /// with `x-forge-`. Deprecated: it is read only where `x-forge-sensitive` is
+    /// not written.
+    const DEPRECATED_SENSITIVE: &str = "x-sensitive";
+
+    /// The names of the native keys of a Schema Object, by slot.
+    pub(crate) const NAMES: [&str; 5] = [MODEL_NAME, PROPERTY_NAME, SKIP, SENSITIVE, DEPRECATED_SENSITIVE];
+
+    /// Returns what `key` says on a Schema Object, if it is a native key of one.
+    pub(crate) fn read(key: &str) -> Option<Hit<SchemaField>> {
+        // `x-sensitive` is the one native key outside the prefix.
+        if !key.starts_with(PREFIX) && key != DEPRECATED_SENSITIVE {
+            return None;
+        }
+        Some(match key {
+            MODEL_NAME => Hit::native(SchemaField::ModelName, 0),
+            PROPERTY_NAME => Hit::native(SchemaField::PropertyName, 1),
+            SKIP => Hit::native(SchemaField::Skip(BoolFormat::Bool), 2),
+            SENSITIVE => Hit::native(SchemaField::Sensitive, 3),
+            DEPRECATED_SENSITIVE => Hit::deprecated(SchemaField::Sensitive, 4),
+            _ => return None,
+        })
     }
-    Some(match key {
-        COMMANDS => Hit::native(DocumentField::Commands, 0),
-        _ => return None,
-    })
+}
+
+/// The native keys at the root of the document.
+pub(crate) mod document {
+    use super::{DocumentField, Hit, PREFIX};
+
+    const COMMANDS: &str = "x-forge-commands";
+
+    /// The names of the native keys of the document, by slot.
+    pub(crate) const NAMES: [&str; 1] = [COMMANDS];
+
+    /// Returns what `key` says at the root of the document, if it is a native
+    /// key of it.
+    pub(crate) fn read(key: &str) -> Option<Hit<DocumentField>> {
+        if !key.starts_with(PREFIX) {
+            return None;
+        }
+        Some(match key {
+            COMMANDS => Hit::native(DocumentField::Commands, 0),
+            _ => return None,
+        })
+    }
 }
 
 /// Returns the availability `value` is, such as `beta`, or `None` if it is
@@ -296,6 +323,9 @@ pub(crate) fn assert_one_key_per_tier<F>(keys: &[&str], read: impl Fn(&str) -> O
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The names of the keys of a level, and whether the level reads a key.
+    type Level<'a> = (&'a [&'a str], fn(&str) -> bool);
 
     /// Every native key of each kind of object, in slot order.
     fn native_keys() -> [&'static [&'static str]; 4] {
@@ -335,30 +365,50 @@ mod tests {
     #[test]
     fn each_native_key_is_read_as_itself_and_as_native() {
         let [definitions, parameters, schemas, documents] = native_keys();
-        read_as_itself(definitions, &DEFINITION_NAMES, definition);
-        read_as_itself(parameters, &PARAMETER_NAMES, parameter);
-        read_as_itself(schemas, &SCHEMA_NAMES, schema);
-        read_as_itself(documents, &DOCUMENT_NAMES, document);
+        read_as_itself(definitions, &definition::NAMES, definition::read);
+        read_as_itself(parameters, &parameter::NAMES, parameter::read);
+        read_as_itself(schemas, &schema::NAMES, schema::read);
+        read_as_itself(documents, &document::NAMES, document::read);
     }
 
     #[test]
     fn no_two_native_keys_say_the_same_thing_with_the_same_tier() {
         let [definitions, parameters, schemas, documents] = native_keys();
-        assert_one_key_per_tier(definitions, definition);
-        assert_one_key_per_tier(parameters, parameter);
-        assert_one_key_per_tier(schemas, schema);
-        assert_one_key_per_tier(documents, document);
+        assert_one_key_per_tier(definitions, definition::read);
+        assert_one_key_per_tier(parameters, parameter::read);
+        assert_one_key_per_tier(schemas, schema::read);
+        assert_one_key_per_tier(documents, document::read);
+    }
+
+    #[test]
+    fn a_native_key_is_read_only_at_its_level() {
+        let levels: [Level; 4] = [
+            (&definition::NAMES, |key| definition::read(key).is_some()),
+            (&parameter::NAMES, |key| parameter::read(key).is_some()),
+            (&schema::NAMES, |key| schema::read(key).is_some()),
+            (&document::NAMES, |key| document::read(key).is_some()),
+        ];
+        for (own, _) in levels {
+            for &key in own {
+                for (names, reads) in levels {
+                    assert_eq!(reads(key), names.contains(&key), "{key}");
+                }
+            }
+        }
     }
 
     #[test]
     #[should_panic(expected = "x-forge-sensitive and x-forge-sensitive say the same thing with the same tier")]
     fn one_key_per_tier_finds_two() {
-        assert_one_key_per_tier(&["x-forge-sensitive", "x-forge-sensitive"], schema);
+        assert_one_key_per_tier(&["x-forge-sensitive", "x-forge-sensitive"], schema::read);
     }
 
     #[test]
     fn x_sensitive_is_a_deprecated_name_of_x_forge_sensitive() {
-        let (current, old) = (schema("x-forge-sensitive").unwrap(), schema("x-sensitive").unwrap());
+        let (current, old) = (
+            schema::read("x-forge-sensitive").unwrap(),
+            schema::read("x-sensitive").unwrap(),
+        );
 
         assert!(matches!(
             (current.field, old.field),
@@ -370,7 +420,7 @@ mod tests {
 
     #[test]
     fn a_slot_past_the_native_ones_has_no_native_name() {
-        assert_eq!(native_name(&DEFINITION_NAMES, COMPAT_SLOTS), None);
+        assert_eq!(native_name(&definition::NAMES, COMPAT_SLOTS), None);
     }
 
     #[test]
@@ -384,8 +434,10 @@ mod tests {
             assert_eq!(slots.len(), len, "duplicate slot among {keys:?}");
             assert!(slots.iter().all(|&slot| slot < 32), "native slots are under 32");
         };
-        slots(definitions, &|key| definition(key).map_or(u8::MAX, |hit| hit.slot));
-        slots(schemas, &|key| schema(key).map_or(u8::MAX, |hit| hit.slot));
+        slots(definitions, &|key| {
+            definition::read(key).map_or(u8::MAX, |hit| hit.slot)
+        });
+        slots(schemas, &|key| schema::read(key).map_or(u8::MAX, |hit| hit.slot));
     }
 
     #[test]
@@ -398,17 +450,17 @@ mod tests {
             "x-forge-nope",
             "x-forge-method",
         ] {
-            assert!(definition(key).is_none(), "{key}");
-            assert!(parameter(key).is_none(), "{key}");
-            assert!(schema(key).is_none(), "{key}");
-            assert!(document(key).is_none(), "{key}");
+            assert!(definition::read(key).is_none(), "{key}");
+            assert!(parameter::read(key).is_none(), "{key}");
+            assert!(schema::read(key).is_none(), "{key}");
+            assert!(document::read(key).is_none(), "{key}");
         }
     }
 
     #[test]
     fn aliases_are_not_a_definition_key() {
         assert!(is_aliases("x-forge-aliases"));
-        assert!(definition("x-forge-aliases").is_none());
+        assert!(definition::read("x-forge-aliases").is_none());
     }
 
     #[test]

@@ -16,23 +16,23 @@ use crate::metadata::{self, DefinitionField, DocumentField, Hit, ParameterField,
 /// Returns what `key` says on an operation or an alias, if it is a key of
 /// one.
 pub(super) fn definition(key: &str) -> Option<Hit<DefinitionField>> {
-    metadata::definition(key).or_else(|| compat_definition(key))
+    metadata::definition::read(key).or_else(|| compat_definition(key))
 }
 
 /// Returns what `key` says on a Parameter Object, if it is a key of one.
 pub(super) fn parameter(key: &str) -> Option<Hit<ParameterField>> {
-    metadata::parameter(key).or_else(|| compat_parameter(key))
+    metadata::parameter::read(key).or_else(|| compat_parameter(key))
 }
 
 /// Returns what `key` says on a Schema Object, if it is a key of one.
 pub(super) fn schema(key: &str) -> Option<Hit<SchemaField>> {
-    metadata::schema(key).or_else(|| compat_schema(key))
+    metadata::schema::read(key).or_else(|| compat_schema(key))
 }
 
 /// Returns what `key` says at the root of the document, if it is a key of
 /// it. No compatibility key says anything there.
 pub(super) fn document(key: &str) -> Option<Hit<DocumentField>> {
-    metadata::document(key)
+    metadata::document::read(key)
 }
 
 /// A kind of object with extensions, which can name its keys by slot.
@@ -43,25 +43,25 @@ pub(super) trait Kind {
 
 impl Kind for DefinitionField {
     fn name(slot: u8) -> &'static str {
-        metadata::native_name(&metadata::DEFINITION_NAMES, slot).unwrap_or_else(|| compat_definition_name(slot))
+        metadata::native_name(&metadata::definition::NAMES, slot).unwrap_or_else(|| compat_definition_name(slot))
     }
 }
 
 impl Kind for ParameterField {
     fn name(slot: u8) -> &'static str {
-        metadata::native_name(&metadata::PARAMETER_NAMES, slot).unwrap_or_else(|| compat_parameter_name(slot))
+        metadata::native_name(&metadata::parameter::NAMES, slot).unwrap_or_else(|| compat_parameter_name(slot))
     }
 }
 
 impl Kind for SchemaField {
     fn name(slot: u8) -> &'static str {
-        metadata::native_name(&metadata::SCHEMA_NAMES, slot).unwrap_or_else(|| compat_schema_name(slot))
+        metadata::native_name(&metadata::schema::NAMES, slot).unwrap_or_else(|| compat_schema_name(slot))
     }
 }
 
 impl Kind for DocumentField {
     fn name(slot: u8) -> &'static str {
-        metadata::native_name(&metadata::DOCUMENT_NAMES, slot).unwrap_or_default()
+        metadata::native_name(&metadata::document::NAMES, slot).unwrap_or_default()
     }
 }
 
