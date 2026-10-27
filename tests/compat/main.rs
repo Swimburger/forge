@@ -17,4 +17,6 @@ mod fern;
 mod native_first;
 #[cfg(feature = "normalize")]
 mod normalize;
+#[cfg(all(feature = "normalize", feature = "cli"))]
+mod normalize_cli;
 mod stainless;
