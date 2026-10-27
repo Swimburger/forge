@@ -28,6 +28,22 @@ Everything below follows from that.
   `mod.rs` is the only way in: one resolver per kind of object, and one name
   lookup per kind so errors can name the key the author wrote.
 
+## `forge normalize`
+
+`forge normalize` (`src/normalize/`) runs these tables as a rewrite instead
+of a read: it finds a key with the same lookups the reader uses, at the same
+kinds of object, and writes the native key that says the same thing. There is
+no second list of keys, so a key added to an adapter is normalized too, and a
+key the reader does not read on an object is not rewritten there. Its tests
+are in `tests/compat/`, with the other vendor-keyed documents.
+
+One thing it does is not a key becoming its native key: a group path that
+is an array becomes the names joined by dots, unless a name has a dot in it.
+And what no native key says is left exactly as it is written, in both modes,
+and is not counted or reported: a skip that is a list of targets, which a
+native skip, that is for every target, does not say. A rewrite does not drop
+what only the old key says.
+
 ## Adding a vendor key
 
 1. Find the native primitive it stands for in `src/metadata/`. If there is
@@ -36,12 +52,17 @@ Everything below follows from that.
 2. Map it in the adapter for its tool, or add an adapter next to `fern.rs`
    and `stainless.rs` and register it in `mod.rs`.
 3. Add a test in `tests/compat/` showing that the vendor-keyed document
-   parses to the same `Forge` as the native-keyed one.
+   parses to the same `Forge` as the native-keyed one. `forge normalize`
+   picks the key up without a change, and rewrites it to the native key.
 
 ## Removing the layer
 
 Delete this folder and `tests/compat/`, `mod compat` in `src/lib.rs`, the
 `compat` arms in `src/link/resolve.rs`, and the `compat` feature and its
-`[[test]]` entry in `Cargo.toml`. No native extension changes. A few
+`[[test]]` entry in `Cargo.toml`. `forge normalize` is built on these tables:
+it goes too, which is `src/normalize/`, `mod normalize` in `src/lib.rs`,
+`src/bin/forge/normalize.rs`, `Command` in `src/bin/forge/main.rs`, and the
+`normalize` feature, the `glob` and `memchr` dependencies and the CLI tests
+of `tests/compat/`. No native extension changes. A few
 native-side items exist only for the layer and are left unused; removing them
 is a mechanical follow-up.

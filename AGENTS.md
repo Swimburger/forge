@@ -17,6 +17,7 @@ Only `src/compat/` knows vendor extensions (`x-fern-*`, `x-stainless-*`). It is 
 - Never name a vendor extension outside `src/compat/` and `tests/compat/`, comments and docs included. `tests/boundary.rs` enforces this (`just boundary`).
 - Compat is behind the default-on `compat` feature and is only a fallback: native `x-forge-*` keys always win.
 - Support for a new vendor key means mapping it onto an existing native primitive in an adapter. Add the native key first if there is none.
+- `forge normalize` rewrites vendor keys to native ones using the same adapter tables, so it needs no list of its own.
 - The docs packages (`astro-fern`, `fern-forge`, `cloudflare-api-site`) read vendor keys themselves and are not covered by the boundary.
 
 ## Conventions

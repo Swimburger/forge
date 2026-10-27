@@ -16,6 +16,52 @@ npx @cloudflare/forge openapi.json --target ts --out sdk
 Pass `-` instead of a path to read the document from standard input. Run
 `forge --help` for every option.
 
+## Normalizing a document
+
+Forge's own metadata is the `x-forge-*` extensions. Documents that were
+written for other tools carry those tools' extensions instead, and
+`forge normalize` rewrites them into the native ones:
+
+```sh
+npx forge normalize 'specs/**/*.json'
+```
+
+(To generate from a document that is itself called `normalize`, write it as
+`./normalize`.)
+
+It takes paths, folders (every `.json` file below them, except hidden ones and
+those in a `node_modules`) and quoted glob patterns, which are taken as they
+are written, and rewrites each file in place. It prints a line for each file
+it rewrites to standard error, and `-v` adds how many times each key was
+rewritten. A file with
+nothing to rewrite is left as it is. A link is followed, and stays a link, and
+so does a hard link; a file that is given twice is rewritten once; and a file
+that is read-only is left as it is, with an error. Documents have to be JSON:
+YAML is not supported yet, and neither is a byte order mark. A file that is
+not valid JSON is an error, and is left as it is.
+
+Only the keys change: the rest of the file, including its whitespace, the
+order of its keys and the text of every number, stays byte for byte as it was,
+so a diff of the file is the keys. The one value that is written again is a
+group path, which becomes the names joined by dots (`["a", "b"]` becomes
+`"a.b"`); a path that a dotted string cannot say, such as a name with a dot in
+it, is kept as it was. A key that no native key says, such as a skip that is a list
+of targets, is left exactly as it is written, whichever mode is used. Native
+keys always win: when a document
+says the same thing twice, the native key is kept, and the other is reported
+as a warning if it says something else.
+
+```sh
+# Keep the old keys beside the native ones, for what still reads them.
+npx forge normalize --leave-old-extensions openapi.json
+
+# Write nothing, and fail if anything would be rewritten: for a check in CI.
+npx forge normalize --check specs
+
+# Read from standard input, write to standard output, and generate from that.
+cat openapi.json | npx forge normalize - | npx forge - --target ts --out sdk
+```
+
 ## Plugins
 
 A plugin generates an SDK, or anything else, from the document: forge parses
