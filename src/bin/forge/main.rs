@@ -14,7 +14,6 @@ use std::process::ExitCode;
 use clap::Parser;
 use forge::{Err, Forge};
 
-#[cfg(feature = "normalize")]
 mod normalize;
 mod ts;
 
@@ -26,7 +25,6 @@ mod ts;
 #[derive(Parser)]
 #[command(version, args_conflicts_with_subcommands = true)]
 struct Args {
-    #[cfg(feature = "normalize")]
     #[command(subcommand)]
     command: Option<Command>,
     /// The OpenAPI JSON document, or - to read it from standard input.
@@ -42,7 +40,6 @@ struct Args {
 }
 
 /// What `forge` does other than generate an SDK.
-#[cfg(feature = "normalize")]
 #[derive(clap::Subcommand)]
 enum Command {
     /// Rewrite other tools' extensions into the native x-forge-* ones, in place.
@@ -94,7 +91,6 @@ fn main() -> ExitCode {
 
 /// Does what `args` ask for.
 fn run(args: Args) -> Result<(), Err> {
-    #[cfg(feature = "normalize")]
     if let Some(Command::Normalize(args)) = args.command {
         return normalize::run(args);
     }
@@ -133,7 +129,6 @@ fn read(path: &Path) -> Result<Forge, Err> {
         } else {
             fs::read(path)?
         };
-        #[cfg(feature = "normalize")]
         let json = normalize::before_reading(json)?;
         Ok(serde_json::from_slice(&json)?)
     };
@@ -143,13 +138,10 @@ fn read(path: &Path) -> Result<Forge, Err> {
 #[cfg(test)]
 mod tests {
     use clap::CommandFactory;
-    #[cfg(feature = "normalize")]
     use clap::Parser;
-    #[cfg(feature = "normalize")]
     use std::path::Path;
 
     use super::Args;
-    #[cfg(feature = "normalize")]
     use super::Command;
 
     #[test]
@@ -157,7 +149,6 @@ mod tests {
         Args::command().debug_assert();
     }
 
-    #[cfg(feature = "normalize")]
     #[test]
     fn a_command_and_a_document_are_told_apart() {
         let parse = |args: &[&str]| Args::try_parse_from(std::iter::once("forge").chain(args.iter().copied()));

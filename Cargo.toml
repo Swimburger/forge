@@ -9,30 +9,25 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"], optional = true }
 glob = { version = "0.3.3", optional = true }
-memchr = { version = "2.8.3", optional = true }
+memchr = "2.8.3"
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", optional = true }
+serde_json = "1.0.151"
 wasmtime = { version = "49.0.2", default-features = false, features = ["runtime", "cranelift", "component-model", "parallel-compilation", "std"], optional = true }
 wasmtime-wasi = { version = "49.0.2", default-features = false, features = ["p2"], optional = true }
 
 [dev-dependencies]
 divan = "0.1.21"
-serde_json = "1.0.151"
 
 [[bench]]
 name = "parse"
 harness = false
 
 [features]
-default = ["cli", "normalize"]
-# `forge::normalize`, and `forge normalize` when the `cli` feature is on: it
-# rewrites the extensions other tools' metadata is written with into the
-# native `x-forge-*` ones, which are the only ones `forge` reads.
-normalize = ["dep:serde_json", "dep:memchr"]
+default = ["cli"]
 # The `forge` command. Library users can turn it off with
 # `default-features = false`.
-cli = ["dep:clap", "dep:serde_json", "dep:glob"]
+cli = ["dep:clap", "dep:glob"]
 # `forge::wasm`, which runs plugins compiled to WebAssembly components.
 wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
 
@@ -54,10 +49,6 @@ required-features = ["cli"]
 [[test]]
 name = "wasm"
 required-features = ["cli", "wasm"]
-
-[[test]]
-name = "normalize"
-required-features = ["normalize"]
 
 
 [lints.clippy]

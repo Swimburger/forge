@@ -60,8 +60,6 @@ src/
    └─ scan.rs       reading JSON as bytes, and editing it where it is read.
 ```
 
-`normalize` is a default-on feature; the engine builds without it.
-
 ## Migration
 
 - Run `forge normalize` before `forge` reads a document written with vendor keys, with `--leave-old-extensions` where something else still reads them. A pipeline is `cat spec.json | forge normalize - | forge - --target ts --out sdk`.

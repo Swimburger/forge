@@ -112,7 +112,6 @@ pub(crate) mod definition {
     pub(crate) const NAMES: [&str; 6] = [METHOD_NAME, GROUP_NAME, SKIP, AVAILABILITY, HIDDEN, CONFIRMATION];
 
     /// Returns the native key that says what `field` says.
-    #[cfg(feature = "normalize")]
     pub(crate) fn key(field: DefinitionField) -> &'static str {
         match field {
             DefinitionField::Method => METHOD_NAME,
@@ -152,7 +151,6 @@ pub(crate) mod parameter {
     pub(crate) const NAMES: [&str; 1] = [NAME];
 
     /// Returns the native key that says what `field` says.
-    #[cfg(feature = "normalize")]
     pub(crate) fn key(field: ParameterField) -> &'static str {
         match field {
             ParameterField::Name => NAME,
@@ -185,7 +183,6 @@ pub(crate) mod schema {
     pub(crate) const NAMES: [&str; 4] = [MODEL_NAME, PROPERTY_NAME, SKIP, SENSITIVE];
 
     /// Returns the native key that says what `field` says.
-    #[cfg(feature = "normalize")]
     pub(crate) fn key(field: SchemaField) -> &'static str {
         match field {
             SchemaField::ModelName => MODEL_NAME,
@@ -294,7 +291,6 @@ mod tests {
         read_as_itself(documents, &document::NAMES, document::read);
     }
 
-    #[cfg(feature = "normalize")]
     #[test]
     fn each_field_is_said_by_the_native_key_that_reads_as_it() {
         use std::mem::discriminant as same;
