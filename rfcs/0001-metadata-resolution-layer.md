@@ -38,6 +38,7 @@ Not in scope: Fern's structural behavior (allOf/anyOf, inline request types), op
 
 ## What `forge normalize` does
 
+- It changes nothing unless it is told to: one document is printed, rewritten, to standard output, and `--write` rewrites each file in place, only if something in it changes. `-` reads standard input and prints. `--check` writes nothing and fails if anything would change.
 - A key is rewritten only at the kind of object `forge` reads its native key at: an operation or an alias, a parameter, or a schema.
 - The document is edited as bytes, not written again: whitespace, key order and the text of every number stay as they were, so a diff is only the keys.
 - A native key is never replaced. When a document says the same thing twice, the native key is kept, and the other is dropped, or reported if it says something else.
@@ -62,7 +63,7 @@ src/
 
 ## Migration
 
-- Run `forge normalize` before `forge` reads a document written with vendor keys, with `--leave-old-extensions` where something else still reads them. A pipeline is `cat spec.json | forge normalize - | forge - --target ts --out sdk`.
+- Run `forge normalize --write` before `forge` reads a document written with vendor keys, with `--leave-old-extensions` where something else still reads them. A pipeline is `cat spec.json | forge normalize - | forge - --target ts --out sdk`.
 - Until the release that makes `forge normalize` a step to run first, the `forge` command does the same rewrite in memory when it reads a document, so one that has not been through it builds as before. It costs a pass over the document, and stops in that release; the core never reads anything but native keys.
 - After that release, a document that is not normalized is not an error: `forge` finds no method names in it, and so no methods.
 - Keys that are left are ordinary extensions, so plugins see them.

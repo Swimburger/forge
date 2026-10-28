@@ -25,7 +25,11 @@ Run it before forge reads the document, with `--leave-old-extensions` if
 something else still reads the old keys:
 
 ```sh
-npx forge normalize specs/*.json
+# Print a document with its keys rewritten. Nothing is changed.
+npx forge normalize openapi.json
+
+# Rewrite the files in place.
+npx forge normalize --write specs/*.json
 ```
 
 For now, `forge` also does this in memory when it reads a document, so one that
@@ -34,10 +38,12 @@ temporary: it stops in the release that makes `forge normalize` a step to run
 first, and the extensions of other tools are then passed on to plugins like any
 other that forge does not read.
 
-It takes paths, which the shell can expand (`specs/*.json`), and rewrites each
-file in place. It prints a line for each file it rewrites to standard error,
-and `-v` adds how many times each key was rewritten. A file with nothing to
-rewrite is left as it is. A link is followed, and stays a link, and
+It takes paths, which the shell can expand (`specs/*.json`). Without `--write` it
+changes nothing: it prints one document, rewritten, to standard output. With
+`--write` it rewrites each file in place, and only if there is something to
+rewrite in it, and it prints a line for each file to standard error, and `-v`
+adds how many times each key was rewritten. Several files need `--write`, or
+`--check`. A link is followed, and stays a link, and
 so does a hard link; a file that is given twice is rewritten once; and a file
 that is read-only is left as it is, with an error. Documents have to be JSON:
 YAML is not supported yet, and neither is a byte order mark. A file that is
@@ -57,7 +63,7 @@ as a warning if it says something else.
 
 ```sh
 # Keep the old keys beside the native ones, for what still reads them.
-npx forge normalize --leave-old-extensions openapi.json
+npx forge normalize --write --leave-old-extensions openapi.json
 
 # Write nothing, and fail if anything would be rewritten: for a check in CI.
 npx forge normalize --check specs/*.json

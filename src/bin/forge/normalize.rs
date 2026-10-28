@@ -13,11 +13,16 @@ use rayon::prelude::*;
 /// What `forge normalize` is given, which says what it does in `main.rs`.
 #[derive(clap::Args)]
 pub struct Args {
-    /// The OpenAPI JSON documents to rewrite, in place, as paths. A pattern
-    /// such as `specs/*.json` is expanded by the shell. Or - to read one from
-    /// standard input and write it to standard output.
+    /// The OpenAPI JSON documents, as paths. A pattern such as `specs/*.json`
+    /// is expanded by the shell. One document is printed to standard output,
+    /// with nothing changed, unless `--write` is given. Or - to read one from
+    /// standard input and print it.
     #[arg(required = true)]
     inputs: Vec<String>,
+    /// Rewrite the files in place, each only if there is something to rewrite
+    /// in it. Without it nothing is changed, and one document is printed.
+    #[arg(short, long, conflicts_with = "check")]
+    write: bool,
     /// Keep each key that is rewritten, beside the native key that replaces
     /// it, for what still reads the old one.
     #[arg(long)]
@@ -45,6 +50,9 @@ struct Input {
 struct Say {
     check: bool,
     verbose: bool,
+    /// Whether the document is printed to standard output, and no file is
+    /// rewritten, so that is what is said.
+    printed: bool,
 }
 
 pub fn run(args: Args) -> Result<(), Err> {
@@ -54,15 +62,28 @@ pub fn run(args: Args) -> Result<(), Err> {
     let say = Say {
         check: args.check,
         verbose: args.verbose,
+        printed: !args.write && !args.check,
     };
     if args.inputs.iter().any(|input| input == "-") {
         if args.inputs.len() > 1 {
             return Err("- cannot be given with other inputs".into());
         }
+        if args.write {
+            return Err("- cannot be given with --write: standard input is not a file to rewrite".into());
+        }
         return filter(&options, say);
     }
 
-    let results: Vec<(PathBuf, Result<Report, String>)> = unique_files(&args.inputs)?
+    let files = unique_files(&args.inputs)?;
+    if !args.write && !args.check {
+        // Nothing is changed, so there is one document to print.
+        let [file] = &files[..] else {
+            return Err("several files are only rewritten with --write, or checked with --check".into());
+        };
+        return print_file(file, &options, say);
+    }
+
+    let results: Vec<(PathBuf, Result<Report, String>)> = files
         .into_par_iter()
         .map(|input| {
             let result = rewrite(&input.real, &options, say).map_err(|err| format!("{}: {err}", input.shown.display()));
@@ -126,9 +147,23 @@ fn plural<'a>(n: usize, one: &'a str, many: &'a str) -> &'a str {
 fn filter(options: &Options, say: Say) -> Result<(), Err> {
     let mut json = Vec::new();
     io::stdin().read_to_end(&mut json)?;
-    let normalized = normalize(&json, options).map_err(|err| format!("stdin: {err}"))?;
+    document(&json, "stdin", options, say)
+}
+
+/// Prints the document in the file to standard output, rewritten, and leaves
+/// the file as it is.
+fn print_file(input: &Input, options: &Options, say: Say) -> Result<(), Err> {
+    let name = input.shown.display().to_string();
+    reject_yaml(&input.real).map_err(|err| format!("{name}: {err}"))?;
+    let json = fs::read(&input.real).map_err(|err| format!("{name}: {err}"))?;
+    document(&json, &name, options, say)
+}
+
+/// Rewrites `json`, the document called `name`, to standard output.
+fn document(json: &[u8], name: &str, options: &Options, say: Say) -> Result<(), Err> {
+    let normalized = normalize(json, options).map_err(|err| format!("{name}: {err}"))?;
     if say.check {
-        print("stdin", &normalized.report, say);
+        print(name, &normalized.report, say);
         if normalized.report.changed() {
             return Err("the document would be rewritten".into());
         }
@@ -137,13 +172,13 @@ fn filter(options: &Options, say: Say) -> Result<(), Err> {
     let mut out = io::stdout().lock();
     match &normalized.json {
         Some(edited) => edited.write_to(&mut out)?,
-        None => out.write_all(&json)?,
+        None => out.write_all(json)?,
     }
     // Standard output is held until a line is whole, and what is left at the
     // end, which is all of a document that is one line, is not otherwise
     // known to have been written.
     out.flush()?;
-    print("stdin", &normalized.report, say);
+    print(name, &normalized.report, say);
     Ok(())
 }
 
@@ -188,9 +223,8 @@ impl Identity {
     }
 }
 
-/// Rewrites the file at `path`, if it has a key to rewrite, and says what it
-/// found, which is all it does when it is only checking.
-fn rewrite(path: &Path, options: &Options, say: Say) -> Result<Report, Err> {
+/// Refuses the file at `path` if it is YAML, which is not supported yet.
+fn reject_yaml(path: &Path) -> Result<(), Err> {
     let yaml = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -198,6 +232,13 @@ fn rewrite(path: &Path, options: &Options, say: Say) -> Result<Report, Err> {
     if yaml {
         return Err("YAML is not supported yet: convert the document to JSON first".into());
     }
+    Ok(())
+}
+
+/// Rewrites the file at `path`, if it has a key to rewrite, and says what it
+/// found, which is all it does when it is only checking.
+fn rewrite(path: &Path, options: &Options, say: Say) -> Result<Report, Err> {
+    reject_yaml(path)?;
     let json = fs::read(path)?;
     let Normalized { json, report } = normalize(&json, options)?;
     if let Some(edited) = &json
@@ -327,8 +368,14 @@ fn warn(name: &str, report: &Report) {
 fn print(name: &str, report: &Report, say: Say) {
     if report.changed() {
         let total: usize = report.migrated.values().sum();
-        let did = if say.check { "would rewrite" } else { "rewrote" };
-        eprintln!("{name}: {did} {total} {}", plural(total, "key", "keys"));
+        let keys = plural(total, "key", "keys");
+        if say.check {
+            eprintln!("{name}: would rewrite {total} {keys}");
+        } else if say.printed {
+            eprintln!("{name}: {total} {keys} rewritten in the output");
+        } else {
+            eprintln!("{name}: rewrote {total} {keys}");
+        }
         if say.verbose {
             for (key, count) in &report.migrated {
                 eprintln!("  {key}: {count}");

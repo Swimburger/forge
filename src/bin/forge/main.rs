@@ -42,9 +42,11 @@ struct Args {
 /// What `forge` does other than generate an SDK.
 #[derive(clap::Subcommand)]
 enum Command {
-    /// Rewrite other tools' extensions into the native x-forge-* ones, in place.
+    /// Rewrite other tools' extensions into the native x-forge-* ones.
     ///
-    /// A document that has none is left as it is. A native key is never
+    /// One document is printed to standard output, and nothing is changed,
+    /// unless --write is given, which rewrites the files in place. A document
+    /// that has none is left as it is. A native key is never
     /// replaced: when a document says the same thing twice, the native key is
     /// kept, as it is when `forge` reads the document, and the other is
     /// reported if it says something else.

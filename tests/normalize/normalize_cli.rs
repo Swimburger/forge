@@ -26,6 +26,11 @@ fn normalize(args: &[&str], stdin: &str) -> Output {
     forge(&[&["normalize"], args].concat(), stdin)
 }
 
+/// Runs `forge normalize --write` with `args`, which rewrites the files in place.
+fn rewrite(args: &[&str], stdin: &str) -> Output {
+    normalize(&[&["--write"], args].concat(), stdin)
+}
+
 /// Runs `forge` with `args`, writing `stdin` to it.
 fn forge(args: &[&str], stdin: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_forge"))
@@ -67,7 +72,7 @@ fn a_file_is_rewritten_in_place_as_it_was_written() {
     let file = dir.join("spec.json");
     fs::write(&file, FERN).unwrap();
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
 
     succeeded(&out);
     assert_eq!(
@@ -95,7 +100,7 @@ fn nothing_but_the_keys_that_are_rewritten_changes() {
     let before = "{\n    \"openapi\": \"3.0.3\",\n    \"info\": {\"title\": \"t\\u00e9\\/\", \"version\": \"1\"},\n    \"paths\": {\"/a\": {\"get\": {\n        \"x-fern-sdk-group-name\": [\"a\"],\n        \"x-fern-sdk-method-name\": \"get\",\n        \"responses\": {\"200\": {\"description\": \"ok\", \"content\": {\"application/json\": {\"schema\": {\"type\": \"number\", \"example\": 116.11599994199997, \"minimum\": 0.000005, \"maximum\": 1E5}}}}}\n    }}}\n}\n";
     fs::write(&file, before).unwrap();
 
-    succeeded(&normalize(&[file.to_str().unwrap()], ""));
+    succeeded(&rewrite(&[file.to_str().unwrap()], ""));
 
     let after = before
         .replace("\"x-fern-sdk-group-name\": [\"a\"]", "\"x-forge-group-name\": \"a\"")
@@ -110,7 +115,7 @@ fn a_file_that_needs_nothing_is_left_as_it_is() {
     let written = format!("{NATIVE}\n\n");
     fs::write(&file, &written).unwrap();
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
 
     succeeded(&out);
     assert_eq!(fs::read_to_string(&file).unwrap(), written);
@@ -127,7 +132,7 @@ fn the_old_keys_can_be_left() {
     let file = dir.join("spec.json");
     fs::write(&file, FERN).unwrap();
 
-    succeeded(&normalize(&["--leave-old-extensions", file.to_str().unwrap()], ""));
+    succeeded(&rewrite(&["--leave-old-extensions", file.to_str().unwrap()], ""));
 
     let value: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
     let operation = &value["paths"]["/a"]["get"];
@@ -164,7 +169,7 @@ fn standard_input_cannot_be_given_with_files() {
 
 #[test]
 fn a_file_that_is_missing_is_an_error_that_names_it() {
-    let out = normalize(&["missing.json"], "");
+    let out = rewrite(&["missing.json"], "");
 
     let err = failed(&out);
     assert!(err.contains("forge: missing.json: "), "{err}");
@@ -179,7 +184,7 @@ fn a_file_that_is_not_json_is_an_error_and_the_others_are_still_rewritten() {
 
     let (a, b) = (dir.join("a.json"), dir.join("b.json"));
 
-    let out = normalize(&[a.to_str().unwrap(), b.to_str().unwrap()], "");
+    let out = rewrite(&[a.to_str().unwrap(), b.to_str().unwrap()], "");
 
     let err = failed(&out);
     assert!(err.contains("b.json"), "{err}");
@@ -198,7 +203,7 @@ fn a_native_key_wins_and_the_one_that_differs_is_reported() {
     )
     .unwrap();
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
 
     succeeded(&out);
     let err = text(&out.stderr);
@@ -218,7 +223,7 @@ fn a_group_that_cannot_be_a_dotted_string_is_kept_and_nothing_is_said_about_it()
     let file = dir.join("spec.json");
     fs::write(&file, FERN.replace(r#"["a"]"#, r#"["a.b"]"#)).unwrap();
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
 
     succeeded(&out);
     let err = text(&out.stderr);
@@ -241,8 +246,8 @@ fn what_it_did_is_a_line_for_each_file_and_the_keys_are_listed_with_v() {
     }
     let (a, b) = (dir.join("a.json"), dir.join("b.json"));
 
-    let quiet = normalize(&[a.to_str().unwrap()], "");
-    let verbose = normalize(&["-v", b.to_str().unwrap()], "");
+    let quiet = rewrite(&[a.to_str().unwrap()], "");
+    let verbose = rewrite(&["-v", b.to_str().unwrap()], "");
 
     let (quiet, verbose) = (text(&quiet.stderr), text(&verbose.stderr));
     assert_eq!(quiet.lines().count(), 2, "{quiet}");
@@ -298,7 +303,7 @@ fn a_yaml_file_is_an_error_and_is_not_reported_as_native() {
         fs::write(dir.join(name), "openapi: 3.0.3\nx-fern-ignore: true\n").unwrap();
         let file = dir.join(name);
 
-        let out = normalize(&[file.to_str().unwrap()], "");
+        let out = rewrite(&[file.to_str().unwrap()], "");
 
         let err = failed(&out);
         assert!(err.contains("YAML is not supported yet"), "{name}: {err}");
@@ -319,7 +324,7 @@ fn a_file_that_is_not_an_object_is_an_error_whatever_it_is_named() {
         fs::write(dir.join(name), content).unwrap();
         let file = dir.join(name);
 
-        let out = normalize(&[file.to_str().unwrap()], "");
+        let out = rewrite(&[file.to_str().unwrap()], "");
 
         let err = failed(&out);
         assert!(err.contains(name), "{name}: {err}");
@@ -362,7 +367,7 @@ fn a_link_stays_a_link_and_the_file_it_points_to_is_rewritten() {
     fs::write(dir.join("real/spec.json"), FERN).unwrap();
     std::os::unix::fs::symlink("../real/spec.json", dir.join("links/spec.json")).unwrap();
 
-    let out = normalize(&[dir.join("links/spec.json").to_str().unwrap()], "");
+    let out = rewrite(&[dir.join("links/spec.json").to_str().unwrap()], "");
 
     succeeded(&out);
     assert!(
@@ -389,7 +394,7 @@ fn a_file_given_more_than_once_is_rewritten_once() {
 
     for _ in 0..5 {
         fs::write(&file, FERN).unwrap();
-        let out = normalize(&[file.to_str().unwrap(), &again], "");
+        let out = rewrite(&[file.to_str().unwrap(), &again], "");
 
         succeeded(&out);
         assert!(
@@ -401,12 +406,106 @@ fn a_file_given_more_than_once_is_rewritten_once() {
     }
 }
 
+/// Nothing is changed unless `--write` says so.
+#[test]
+fn one_file_is_printed_rewritten_and_is_not_changed_without_write() {
+    let dir = dir("print");
+    let file = dir.join("spec.json");
+    fs::write(&file, FERN).unwrap();
+
+    let out = normalize(&[file.to_str().unwrap()], "");
+
+    succeeded(&out);
+    assert_eq!(text(&out.stdout), NATIVE);
+    assert_eq!(fs::read_to_string(&file).unwrap(), FERN, "the file is as it was");
+    assert!(
+        text(&out.stderr).contains("spec.json: 2 keys rewritten in the output"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!text(&out.stderr).contains("rewrote"), "nothing was written");
+}
+
+#[test]
+fn a_file_with_nothing_to_rewrite_is_printed_as_it_is() {
+    let dir = dir("print-nothing");
+    let file = dir.join("spec.json");
+    fs::write(&file, NATIVE).unwrap();
+
+    let out = normalize(&[file.to_str().unwrap()], "");
+
+    succeeded(&out);
+    assert_eq!(text(&out.stdout), NATIVE);
+    assert_eq!(text(&out.stderr), "");
+}
+
+#[test]
+fn several_files_are_only_rewritten_with_write_or_checked_with_check() {
+    let dir = dir("several");
+    let (a, b) = (dir.join("a.json"), dir.join("b.json"));
+    fs::write(&a, FERN).unwrap();
+    fs::write(&b, FERN).unwrap();
+    let both = [a.to_str().unwrap(), b.to_str().unwrap()];
+
+    let out = normalize(&both, "");
+
+    let err = failed(&out);
+    assert!(err.contains("--write") && err.contains("--check"), "{err}");
+    assert_eq!(text(&out.stdout), "", "nothing is printed");
+    assert_eq!(fs::read_to_string(&a).unwrap(), FERN);
+    assert_eq!(fs::read_to_string(&b).unwrap(), FERN);
+
+    // The same file twice is one file, which is printed.
+    succeeded(&normalize(&[both[0], both[0]], ""));
+}
+
+#[test]
+fn write_and_check_cannot_be_given_together() {
+    let dir = dir("write-check");
+    let file = dir.join("spec.json");
+    fs::write(&file, FERN).unwrap();
+
+    let out = normalize(&["--write", "--check", file.to_str().unwrap()], "");
+
+    let err = failed(&out);
+    assert!(err.contains("--write") && err.contains("--check"), "{err}");
+    assert_eq!(fs::read_to_string(&file).unwrap(), FERN);
+}
+
+#[test]
+fn standard_input_cannot_be_rewritten_in_place() {
+    let out = normalize(&["--write", "-"], FERN);
+
+    let err = failed(&out);
+    assert!(err.contains("- cannot be given with --write"), "{err}");
+    assert_eq!(text(&out.stdout), "");
+}
+
+#[test]
+fn write_rewrites_each_file_in_place_and_says_so() {
+    let dir = dir("write");
+    let (a, b) = (dir.join("a.json"), dir.join("b.json"));
+    fs::write(&a, FERN).unwrap();
+    fs::write(&b, NATIVE).unwrap();
+
+    let out = rewrite(&[a.to_str().unwrap(), b.to_str().unwrap()], "");
+
+    succeeded(&out);
+    assert_eq!(text(&out.stdout), "", "what is written is the files");
+    assert_eq!(fs::read_to_string(&a).unwrap(), NATIVE);
+    assert!(
+        text(&out.stderr).contains("2 files: 1 rewritten, 1 unchanged"),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
 #[test]
 fn a_folder_is_an_error_that_says_so() {
     let dir = dir("a-folder");
     fs::write(dir.join("a.json"), FERN).unwrap();
 
-    let out = normalize(&[dir.to_str().unwrap()], "");
+    let out = rewrite(&[dir.to_str().unwrap()], "");
 
     let err = failed(&out);
     assert!(err.contains("is a folder, not a file"), "{err}");
@@ -422,7 +521,7 @@ fn a_pattern_is_for_the_shell_and_is_not_expanded() {
     let dir = dir("pattern");
     fs::write(dir.join("a.json"), FERN).unwrap();
 
-    let out = normalize(&[&format!("{}/*.json", dir.display())], "");
+    let out = rewrite(&[&format!("{}/*.json", dir.display())], "");
 
     let err = failed(&out);
     assert!(err.contains("*.json: "), "{err}");
@@ -435,7 +534,7 @@ fn a_file_whose_name_has_glob_characters_is_that_file() {
     let file = dir.join("spec[1].json");
     fs::write(&file, FERN).unwrap();
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
 
     succeeded(&out);
     assert_eq!(fs::read_to_string(&file).unwrap(), NATIVE);
@@ -451,7 +550,7 @@ fn a_read_only_file_is_not_rewritten() {
     fs::write(&file, FERN).unwrap();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
     let check = normalize(&["--check", file.to_str().unwrap()], "");
 
     let err = failed(&out);
@@ -474,7 +573,7 @@ fn a_byte_order_mark_is_named_and_the_file_is_left_as_it_is() {
     let content = format!("\u{feff}{FERN}");
     fs::write(&file, &content).unwrap();
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
 
     let err = failed(&out);
     assert!(
@@ -494,7 +593,7 @@ fn a_key_written_twice_is_a_warning_that_says_where_and_the_file_is_rewritten() 
     )
     .unwrap();
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
 
     succeeded(&out);
     let err = text(&out.stderr);
@@ -520,7 +619,7 @@ fn the_summary_counts_the_warnings() {
     )
     .unwrap();
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
 
     succeeded(&out);
     assert!(
@@ -536,7 +635,7 @@ fn standard_input_is_called_stdin_and_a_failure_on_it_says_so() {
     let broken = normalize(&["-"], "{\"x-fern-ignore\": ");
 
     assert!(
-        text(&out.stderr).starts_with("stdin: rewrote 2 keys"),
+        text(&out.stderr).starts_with("stdin: 2 keys rewritten in the output"),
         "{}",
         text(&out.stderr)
     );
@@ -549,7 +648,7 @@ fn v_says_how_many_group_paths_were_joined() {
     let file = dir.join("spec.json");
     fs::write(&file, FERN).unwrap();
 
-    let out = normalize(&["-v", file.to_str().unwrap()], "");
+    let out = rewrite(&["-v", file.to_str().unwrap()], "");
 
     assert!(
         text(&out.stderr).contains("  1 group path written as a dotted string"),
@@ -566,7 +665,7 @@ fn a_hard_link_stays_a_link_to_the_file_that_is_rewritten() {
     fs::write(&a, FERN).unwrap();
     fs::hard_link(&a, &b).unwrap();
 
-    succeeded(&normalize(&[a.to_str().unwrap()], ""));
+    succeeded(&rewrite(&[a.to_str().unwrap()], ""));
 
     assert_eq!(fs::read_to_string(&a).unwrap(), NATIVE);
     assert_eq!(
@@ -584,7 +683,7 @@ fn two_names_of_one_file_are_one_file_and_are_rewritten_once() {
     fs::write(&a, FERN).unwrap();
     fs::hard_link(&a, &b).unwrap();
 
-    let out = normalize(&[a.to_str().unwrap(), b.to_str().unwrap()], "");
+    let out = rewrite(&[a.to_str().unwrap(), b.to_str().unwrap()], "");
 
     succeeded(&out);
     assert!(
@@ -611,7 +710,7 @@ fn a_file_in_a_folder_that_cannot_be_written_to_is_rewritten_in_place() {
         return;
     }
 
-    let out = normalize(&[file.to_str().unwrap()], "");
+    let out = rewrite(&[file.to_str().unwrap()], "");
 
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
     succeeded(&out);
