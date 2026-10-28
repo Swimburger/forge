@@ -23,8 +23,6 @@ mod ts;
 /// The extensions other tools write are rewritten into the native ones in
 /// memory first, as `forge normalize` does to a file. That is temporary: it
 /// stops in the release that makes `forge normalize` a step to run first.
-///
-/// A document that is named `normalize` is given as `./normalize`.
 #[derive(Parser)]
 #[command(version, args_conflicts_with_subcommands = true)]
 struct Args {

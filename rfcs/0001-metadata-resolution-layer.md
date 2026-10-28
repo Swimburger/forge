@@ -42,7 +42,7 @@ Not in scope: Fern's structural behavior (allOf/anyOf, inline request types), op
 - The document is edited as bytes, not written again: whitespace, key order and the text of every number stay as they were, so a diff is only the keys.
 - A native key is never replaced. When a document says the same thing twice, the native key is kept, and the other is dropped, or reported if it says something else.
 - A group path that is an array becomes the names joined by dots, unless a name has a dot in it.
-- What no native key says, such as a skip that is a list of targets, is left as it is written.
+- A skip on a property is rewritten to `x-forge-skip` with the same value: `x-stainless-skip: true` becomes `x-forge-skip: true`. `x-forge-skip` is for every target, so a skip for only some targets, written as a list (`x-stainless-skip: ["terraform"]`), has no native form and is left as it is written, in both modes.
 - `--leave-old-extensions` keeps each key that is rewritten, beside the native one, for what still reads it.
 
 ## Architecture

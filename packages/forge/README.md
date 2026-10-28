@@ -28,9 +28,6 @@ something else still reads the old keys:
 npx forge normalize 'specs/**/*.json'
 ```
 
-(To generate from a document that is itself called `normalize`, write it as
-`./normalize`.)
-
 For now, `forge` also does this in memory when it reads a document, so one that
 has not been through `forge normalize` builds as it always did. That is
 temporary: it stops in the release that makes `forge normalize` a step to run
@@ -53,9 +50,10 @@ order of its keys and the text of every number, stays byte for byte as it was,
 so a diff of the file is the keys. The one value that is written again is a
 group path, which becomes the names joined by dots (`["a", "b"]` becomes
 `"a.b"`); a path that a dotted string cannot say, such as a name with a dot in
-it, is kept as it was. A key that no native key says, such as a skip that is a list
-of targets, is left exactly as it is written, whichever mode is used. Native
-keys always win: when a document
+it, is kept as it was. A skip for only some targets, which another tool writes
+as a list of them, has no native form, since `x-forge-skip` is for every target:
+it is left exactly as it is written, whichever mode is used, while a skip that
+is plainly true or false is rewritten. Native keys always win: when a document
 says the same thing twice, the native key is kept, and the other is reported
 as a warning if it says something else.
 

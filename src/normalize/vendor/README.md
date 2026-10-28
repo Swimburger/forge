@@ -25,8 +25,11 @@ rewrite them into native keys, before `forge` reads the document.
   meaning it did not have.
 - **Native wins.** When a document has the native key, the vendor one is
   dropped, or reported if it says something else, whatever order they appear
-  in. When a vendor key has no native form, such as a skip that is a list of
-  targets, it is left as it is written.
+  in. When a vendor key has no native form, it is left as it is written: on a
+  property, `x-stainless-skip: true` and `false` become `x-forge-skip` with the
+  same value, but a list of targets such as `["terraform"]` says "skip for
+  these targets", which `x-forge-skip` cannot, as it is for every target. On an
+  operation, `x-stainless-skip` is not read at all.
 
 ## Adding a vendor key
 
