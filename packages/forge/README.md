@@ -25,7 +25,7 @@ Run it before forge reads the document, with `--leave-old-extensions` if
 something else still reads the old keys:
 
 ```sh
-npx forge normalize 'specs/**/*.json'
+npx forge normalize specs/*.json
 ```
 
 For now, `forge` also does this in memory when it reads a document, so one that
@@ -34,12 +34,10 @@ temporary: it stops in the release that makes `forge normalize` a step to run
 first, and the extensions of other tools are then passed on to plugins like any
 other that forge does not read.
 
-It takes paths, folders (every `.json` file below them, except hidden ones and
-those in a `node_modules`) and quoted glob patterns, which are taken as they
-are written, and rewrites each file in place. It prints a line for each file
-it rewrites to standard error, and `-v` adds how many times each key was
-rewritten. A file with
-nothing to rewrite is left as it is. A link is followed, and stays a link, and
+It takes paths, which the shell can expand (`specs/*.json`), and rewrites each
+file in place. It prints a line for each file it rewrites to standard error,
+and `-v` adds how many times each key was rewritten. A file with nothing to
+rewrite is left as it is. A link is followed, and stays a link, and
 so does a hard link; a file that is given twice is rewritten once; and a file
 that is read-only is left as it is, with an error. Documents have to be JSON:
 YAML is not supported yet, and neither is a byte order mark. A file that is
@@ -62,7 +60,7 @@ as a warning if it says something else.
 npx forge normalize --leave-old-extensions openapi.json
 
 # Write nothing, and fail if anything would be rewritten: for a check in CI.
-npx forge normalize --check specs
+npx forge normalize --check specs/*.json
 
 # Read from standard input, write to standard output, and generate from that.
 cat openapi.json | npx forge normalize - | npx forge - --target ts --out sdk

@@ -104,25 +104,6 @@ fn nothing_but_the_keys_that_are_rewritten_changes() {
 }
 
 #[test]
-fn a_glob_finds_files_in_folders_below_it() {
-    let dir = dir("glob");
-    fs::create_dir_all(dir.join("deep/er")).unwrap();
-    for path in ["a.json", "deep/b.json", "deep/er/c.json"] {
-        fs::write(dir.join(path), FERN).unwrap();
-    }
-    fs::write(dir.join("notes.txt"), FERN).unwrap();
-
-    let out = normalize(&[&format!("{}/**/*.json", dir.display())], "");
-
-    succeeded(&out);
-    assert!(text(&out.stderr).contains("3 rewritten"), "{}", text(&out.stderr));
-    for path in ["a.json", "deep/b.json", "deep/er/c.json"] {
-        assert_eq!(fs::read_to_string(dir.join(path)).unwrap(), NATIVE, "{path}");
-    }
-    assert_eq!(fs::read_to_string(dir.join("notes.txt")).unwrap(), FERN);
-}
-
-#[test]
 fn a_file_that_needs_nothing_is_left_as_it_is() {
     let dir = dir("native");
     let file = dir.join("spec.json");
@@ -182,16 +163,6 @@ fn standard_input_cannot_be_given_with_files() {
 }
 
 #[test]
-fn a_glob_that_matches_nothing_is_an_error() {
-    let dir = dir("nothing");
-
-    let out = normalize(&[&format!("{}/*.json", dir.display())], "");
-
-    let err = failed(&out);
-    assert!(err.contains("no files match"), "{err}");
-}
-
-#[test]
 fn a_file_that_is_missing_is_an_error_that_names_it() {
     let out = normalize(&["missing.json"], "");
 
@@ -206,7 +177,9 @@ fn a_file_that_is_not_json_is_an_error_and_the_others_are_still_rewritten() {
     // It has to look like it might change, or it is not parsed.
     fs::write(dir.join("b.json"), r#"{"x-fern-ignore": "#).unwrap();
 
-    let out = normalize(&[&format!("{}/*.json", dir.display())], "");
+    let (a, b) = (dir.join("a.json"), dir.join("b.json"));
+
+    let out = normalize(&[a.to_str().unwrap(), b.to_str().unwrap()], "");
 
     let err = failed(&out);
     assert!(err.contains("b.json"), "{err}");
@@ -319,84 +292,6 @@ fn check_on_standard_input_writes_nothing_and_fails_when_there_is_something_to_r
 }
 
 #[test]
-fn a_folder_is_every_json_file_below_it() {
-    let dir = dir("folder");
-    fs::create_dir_all(dir.join("deep/er")).unwrap();
-    for path in ["a.json", "deep/b.json", "deep/er/c.json"] {
-        fs::write(dir.join(path), FERN).unwrap();
-    }
-    fs::write(dir.join("notes.txt"), FERN).unwrap();
-    fs::write(dir.join("deep/spec.yaml"), "x: 1").unwrap();
-
-    let out = normalize(&[dir.to_str().unwrap()], "");
-
-    succeeded(&out);
-    assert!(
-        text(&out.stderr).contains("3 files: 3 rewritten"),
-        "{}",
-        text(&out.stderr)
-    );
-    for path in ["a.json", "deep/b.json", "deep/er/c.json"] {
-        assert_eq!(fs::read_to_string(dir.join(path)).unwrap(), NATIVE, "{path}");
-    }
-    assert_eq!(fs::read_to_string(dir.join("notes.txt")).unwrap(), FERN);
-}
-
-#[test]
-fn a_folder_leaves_out_what_is_hidden_and_what_is_in_a_node_modules() {
-    let dir = dir("folder-hidden");
-    for path in [".hidden", "node_modules/pkg", "deep/node_modules", "deep/.cache"] {
-        fs::create_dir_all(dir.join(path)).unwrap();
-    }
-    for path in [
-        "a.json",
-        ".hidden/b.json",
-        "node_modules/pkg/c.json",
-        "deep/node_modules/d.json",
-        "deep/.cache/e.json",
-        "deep/f.json",
-    ] {
-        fs::write(dir.join(path), FERN).unwrap();
-    }
-
-    let out = normalize(&[dir.to_str().unwrap()], "");
-
-    succeeded(&out);
-    assert!(
-        text(&out.stderr).contains("2 files: 2 rewritten"),
-        "{}",
-        text(&out.stderr)
-    );
-    for path in ["a.json", "deep/f.json"] {
-        assert_eq!(fs::read_to_string(dir.join(path)).unwrap(), NATIVE, "{path}");
-    }
-    for path in [
-        ".hidden/b.json",
-        "node_modules/pkg/c.json",
-        "deep/node_modules/d.json",
-        "deep/.cache/e.json",
-    ] {
-        assert_eq!(fs::read_to_string(dir.join(path)).unwrap(), FERN, "{path}");
-    }
-
-    // A pattern is taken as it is written, whatever it passes through.
-    let out = normalize(&[&format!("{}/.hidden/*.json", dir.display())], "");
-    succeeded(&out);
-    assert_eq!(fs::read_to_string(dir.join(".hidden/b.json")).unwrap(), NATIVE);
-}
-
-#[test]
-fn a_folder_with_no_json_file_is_an_error() {
-    let dir = dir("empty-folder");
-    fs::write(dir.join("notes.txt"), "x").unwrap();
-
-    let out = normalize(&[dir.to_str().unwrap()], "");
-
-    let err = failed(&out);
-    assert!(err.contains("no .json files below it"), "{err}");
-}
-
-#[test]
 fn a_yaml_file_is_an_error_and_is_not_reported_as_native() {
     let dir = dir("yaml");
     for name in ["spec.yml", "spec.YAML"] {
@@ -494,10 +389,7 @@ fn a_file_given_more_than_once_is_rewritten_once() {
 
     for _ in 0..5 {
         fs::write(&file, FERN).unwrap();
-        let out = normalize(
-            &[file.to_str().unwrap(), &again, &format!("{}/*.json", dir.display())],
-            "",
-        );
+        let out = normalize(&[file.to_str().unwrap(), &again], "");
 
         succeeded(&out);
         assert!(
@@ -507,6 +399,34 @@ fn a_file_given_more_than_once_is_rewritten_once() {
         );
         assert_eq!(fs::read_to_string(&file).unwrap(), NATIVE);
     }
+}
+
+#[test]
+fn a_folder_is_an_error_that_says_so() {
+    let dir = dir("a-folder");
+    fs::write(dir.join("a.json"), FERN).unwrap();
+
+    let out = normalize(&[dir.to_str().unwrap()], "");
+
+    let err = failed(&out);
+    assert!(err.contains("is a folder, not a file"), "{err}");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.json")).unwrap(),
+        FERN,
+        "nothing in it is rewritten"
+    );
+}
+
+#[test]
+fn a_pattern_is_for_the_shell_and_is_not_expanded() {
+    let dir = dir("pattern");
+    fs::write(dir.join("a.json"), FERN).unwrap();
+
+    let out = normalize(&[&format!("{}/*.json", dir.display())], "");
+
+    let err = failed(&out);
+    assert!(err.contains("*.json: "), "{err}");
+    assert_eq!(fs::read_to_string(dir.join("a.json")).unwrap(), FERN);
 }
 
 #[test]

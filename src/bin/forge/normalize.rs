@@ -13,11 +13,9 @@ use rayon::prelude::*;
 /// What `forge normalize` is given, which says what it does in `main.rs`.
 #[derive(clap::Args)]
 pub struct Args {
-    /// The OpenAPI JSON documents to rewrite, as paths, as folders, which
-    /// have every `.json` file below them rewritten, except those that are
-    /// hidden or in a node_modules, or as glob patterns such as
-    /// 'specs/**/*.json', which are taken as they are written. Or - to read one from standard input and write
-    /// it to standard output.
+    /// The OpenAPI JSON documents to rewrite, in place, as paths. A pattern
+    /// such as `specs/*.json` is expanded by the shell. Or - to read one from
+    /// standard input and write it to standard output.
     #[arg(required = true)]
     inputs: Vec<String>,
     /// Keep each key that is rewritten, beside the native key that replaces
@@ -64,7 +62,7 @@ pub fn run(args: Args) -> Result<(), Err> {
         return filter(&options, say);
     }
 
-    let results: Vec<(PathBuf, Result<Report, String>)> = expand(&args.inputs)?
+    let results: Vec<(PathBuf, Result<Report, String>)> = unique_files(&args.inputs)?
         .into_par_iter()
         .map(|input| {
             let result = rewrite(&input.real, &options, say).map_err(|err| format!("{}: {err}", input.shown.display()));
@@ -149,37 +147,20 @@ fn filter(options: &Options, say: Say) -> Result<(), Err> {
     Ok(())
 }
 
-/// Returns the files `inputs` name: each is a path, a folder, which is every
-/// `.json` file below it, or a glob pattern if it has any of `*?[` and is not
-/// a file or a folder by that name, which must match a file.
-fn expand(inputs: &[String]) -> Result<Vec<Input>, Err> {
+/// Returns the files `inputs` name, each once. A path that is not there is
+/// left for reading it to say so, and a pattern such as `specs/*.json` is for
+/// the shell to expand, so one that was not is a path that is not there.
+fn unique_files(inputs: &[String]) -> Result<Vec<Input>, Err> {
     let mut seen = HashSet::new();
     let mut files = Vec::new();
     for input in inputs {
-        let found = if Path::new(input).is_file() {
-            vec![PathBuf::from(input)]
-        } else if Path::new(input).is_dir() {
-            let pattern = format!("{}/**/*.json", glob::Pattern::escape(input.trim_end_matches('/')));
-            let found = glob_files(&pattern, input, true)?;
-            if found.is_empty() {
-                return Err(format!("{input}: no .json files below it").into());
-            }
-            found
-        } else if input.contains(['*', '?', '[']) {
-            let found = glob_files(input, input, false)?;
-            if found.is_empty() {
-                return Err(format!("{input}: no files match").into());
-            }
-            found
-        } else {
-            // Not there, which reading it says.
-            vec![PathBuf::from(input)]
-        };
-        for shown in found {
-            let real = fs::canonicalize(&shown).unwrap_or_else(|_| shown.clone());
-            if seen.insert(Identity::of(&real)) {
-                files.push(Input { shown, real });
-            }
+        if Path::new(input).is_dir() {
+            return Err(format!("{input}: is a folder, not a file").into());
+        }
+        let shown = PathBuf::from(input);
+        let real = fs::canonicalize(&shown).unwrap_or_else(|_| shown.clone());
+        if seen.insert(Identity::of(&real)) {
+            files.push(Input { shown, real });
         }
     }
     Ok(files)
@@ -205,28 +186,6 @@ impl Identity {
         }
         Identity::Path(real.to_owned())
     }
-}
-
-/// Returns the files the glob `pattern` matches, which came from `input`. A
-/// folder that is given has the files below it that are not hidden, and not in
-/// a `node_modules`, which is `folder`; a pattern is taken as it is written.
-fn glob_files(pattern: &str, input: &str, folder: bool) -> Result<Vec<PathBuf>, Err> {
-    let options = glob::MatchOptions {
-        require_literal_leading_dot: folder,
-        ..glob::MatchOptions::new()
-    };
-    let mut files = Vec::new();
-    for path in glob::glob_with(pattern, options).map_err(|err| format!("{input}: {err}"))? {
-        let path = path.map_err(|err| format!("{input}: {err}"))?;
-        let packaged = folder
-            && path
-                .strip_prefix(input.trim_end_matches('/'))
-                .is_ok_and(|below| below.components().any(|part| part.as_os_str() == "node_modules"));
-        if path.is_file() && !packaged {
-            files.push(path);
-        }
-    }
-    Ok(files)
 }
 
 /// Rewrites the file at `path`, if it has a key to rewrite, and says what it
