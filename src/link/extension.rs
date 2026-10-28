@@ -48,8 +48,3 @@ pub(super) fn once<F: Kind, E: de::Error>(hit: &Hit<F>, seen: &mut u64) -> Resul
     *seen |= bit;
     Ok(())
 }
-
-/// Returns the name of the key of an operation or an alias in `slot`.
-pub(super) fn definition_name(slot: u8) -> &'static str {
-    DefinitionField::name(slot)
-}

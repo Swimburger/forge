@@ -101,10 +101,10 @@ pub(crate) fn is_aliases(key: &str) -> bool {
 pub(crate) mod definition {
     use super::{DefinitionField, Hit, PREFIX};
 
-    const METHOD_NAME: &str = "x-forge-method-name";
-    const GROUP_NAME: &str = "x-forge-group-name";
+    pub(crate) const METHOD_NAME: &str = "x-forge-method-name";
+    pub(crate) const GROUP_NAME: &str = "x-forge-group-name";
     const SKIP: &str = "x-forge-skip";
-    const AVAILABILITY: &str = "x-forge-availability";
+    pub(crate) const AVAILABILITY: &str = "x-forge-availability";
     const HIDDEN: &str = "x-forge-hidden";
     const CONFIRMATION: &str = "x-forge-require-confirmation";
 

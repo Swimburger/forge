@@ -565,13 +565,13 @@ impl<'d> Builder<'d> {
         http_method: HttpMethod,
     ) {
         let doc = self.doc;
-        if definition.skip.value {
+        if definition.skip {
             return;
         }
-        if definition.method_name.value.is_empty() {
+        if definition.method_name.is_empty() {
             return;
         }
-        let group_names = doc.list(definition.group_names.value);
+        let group_names = doc.list(definition.group_names);
         if group_names.is_empty() {
             return;
         }
@@ -580,27 +580,27 @@ impl<'d> Builder<'d> {
             if name.is_empty() {
                 self.error(format_args!(
                     "{} has a group name with no letters or digits",
-                    extension::definition_name(definition.group_names.slot)
+                    metadata::definition::GROUP_NAME
                 ));
                 return;
             }
         }
-        let name = Name::new(doc.str(definition.method_name.value));
+        let name = Name::new(doc.str(definition.method_name));
         if name.is_empty() {
             self.error(format_args!(
                 "{} has no letters or digits",
-                extension::definition_name(definition.method_name.slot)
+                metadata::definition::METHOD_NAME
             ));
             return;
         }
         let mut availability = None;
-        if let Some(value) = definition.availability.value {
+        if let Some(value) = definition.availability {
             let value = doc.str(value);
             availability = metadata::availability(value);
             if availability.is_none() {
                 self.error(format_args!(
                     "{} {value:?} is not alpha, beta, preview, generally-available or deprecated",
-                    extension::definition_name(definition.availability.slot)
+                    metadata::definition::AVAILABILITY
                 ));
             }
         }

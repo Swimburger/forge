@@ -238,35 +238,16 @@ pub(super) struct Operation {
     pub(super) responses: Span<(Str, Id<Response>)>,
 }
 
-/// A value an extension gives, and the key it came from, so that an error can
-/// name the key the document wrote.
-#[derive(Default)]
-pub(super) struct Val<T> {
-    pub(super) value: T,
-    /// The slot of the key that gave the value, which names it. It means
-    /// nothing if no key gave one.
-    pub(super) slot: u8,
-}
-
-impl<T> Val<T> {
-    /// Keeps `value`, which `hit` gave. No other key says the same thing, and
-    /// one written twice is an error before it gets here.
-    fn set<F>(&mut self, hit: &Hit<F>, value: T) {
-        self.value = value;
-        self.slot = hit.slot;
-    }
-}
-
 /// The extensions that make an Operation Object, or an alias of one in its
 /// `x-forge-aliases`, a method.
 #[derive(Default)]
 pub(super) struct Definition {
     /// The name of the method, or empty for none.
-    pub(super) method_name: Val<Str>,
+    pub(super) method_name: Str,
     /// The group path, top level first, or empty for none.
-    pub(super) group_names: Val<Span<Str>>,
+    pub(super) group_names: Span<Str>,
     /// Whether the definition makes no method.
-    pub(super) skip: Val<bool>,
+    pub(super) skip: bool,
     /// Whether the method is left out of listings.
     pub(super) hidden: bool,
     /// The sentence to confirm with, or `None` for none. An empty one is
@@ -274,7 +255,7 @@ pub(super) struct Definition {
     pub(super) confirmation: Option<Str>,
     /// The availability as written, or `None` for none. It is checked as
     /// the method is built, so that an error can name the operation.
-    pub(super) availability: Val<Option<Str>>,
+    pub(super) availability: Option<Str>,
     /// Each other extension, which is not read, in `Doc::extensions`, in
     /// the order they are written. One written more than once has the last
     /// value written, in the place of the first.
@@ -1255,30 +1236,20 @@ impl ReadObject for PathItem {
 }
 
 impl Definition {
-    /// Reads the value of the key `hit` says, the key of the entry `map` is
-    /// reading.
+    /// Reads the value of the key that says `field`, the key of the entry `map`
+    /// is reading.
     fn read_value<'de, A: MapAccess<'de>>(
         &mut self,
         doc: &mut Doc,
         map: &mut A,
-        hit: Hit<DefinitionField>,
+        field: DefinitionField,
     ) -> Result<(), A::Error> {
-        match hit.field {
-            DefinitionField::Method => {
-                let name = map.next_value_seed(seed::<ReadStr>(doc))?;
-                self.method_name.set(&hit, name);
-            }
-            DefinitionField::Group => {
-                let names = map.next_value_seed(seed::<GroupNames>(doc))?;
-                self.group_names.set(&hit, names);
-            }
-            DefinitionField::Skip => {
-                let skip = map.next_value()?;
-                self.skip.set(&hit, skip);
-            }
+        match field {
+            DefinitionField::Method => self.method_name = map.next_value_seed(seed::<ReadStr>(doc))?,
+            DefinitionField::Group => self.group_names = map.next_value_seed(seed::<GroupNames>(doc))?,
+            DefinitionField::Skip => self.skip = map.next_value()?,
             DefinitionField::Availability => {
-                let availability = map.next_value_seed(seed::<ReadStr>(doc))?;
-                self.availability.set(&hit, Some(availability));
+                self.availability = Some(map.next_value_seed(seed::<ReadStr>(doc))?);
             }
             DefinitionField::Hidden => self.hidden = map.next_value()?,
             DefinitionField::Confirmation => {
@@ -1308,7 +1279,7 @@ impl ReadObject for Alias {
             match field {
                 AliasField::Definition(hit) => {
                     extension::once(&hit, &mut seen)?;
-                    definition.read_value(doc, &mut map, hit)?;
+                    definition.read_value(doc, &mut map, hit.field)?;
                 }
                 AliasField::Extension(name) => json::insert(&mut extensions, name, map.next_value()?),
                 AliasField::Other => skip(&mut map)?,
@@ -1475,7 +1446,7 @@ impl ReadObject for Operation {
                 OperationField::Key(key) => key,
                 OperationField::Definition(hit) => {
                     extension::once(&hit, &mut seen_definition)?;
-                    operation.definition.read_value(doc, &mut map, hit)?;
+                    operation.definition.read_value(doc, &mut map, hit.field)?;
                     continue;
                 }
                 OperationField::Aliases => {
