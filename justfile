@@ -27,6 +27,10 @@ lint:
     cargo clippy --locked --all-targets --all-features -- -D warnings
     cargo clippy --locked --all-targets --no-default-features -- -D warnings
 
+# Check that no other tool's extension is named outside the vendor tables of `forge normalize`
+boundary:
+    cargo test --locked --test boundary
+
 # Release builds
 #
 # Every way of getting release binaries puts them in target/binaries/<target>/
