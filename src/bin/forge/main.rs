@@ -20,6 +20,10 @@ mod ts;
 
 /// Generates an SDK from an OpenAPI document.
 ///
+/// The extensions other tools write are rewritten into the native ones in
+/// memory first, as `forge normalize` does to a file. That is temporary: it
+/// stops in the release that makes `forge normalize` a step to run first.
+///
 /// A document that is named `normalize` is given as `./normalize`.
 #[derive(Parser)]
 #[command(version, args_conflicts_with_subcommands = true)]
@@ -131,6 +135,8 @@ fn read(path: &Path) -> Result<Forge, Err> {
         } else {
             fs::read(path)?
         };
+        #[cfg(feature = "normalize")]
+        let json = normalize::before_reading(json)?;
         Ok(serde_json::from_slice(&json)?)
     };
     parse().map_err(|err| format!("{}: {err}", path.display()).into())

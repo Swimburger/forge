@@ -31,6 +31,12 @@ npx forge normalize 'specs/**/*.json'
 (To generate from a document that is itself called `normalize`, write it as
 `./normalize`.)
 
+For now, `forge` also does this in memory when it reads a document, so one that
+has not been through `forge normalize` builds as it always did. That is
+temporary: it stops in the release that makes `forge normalize` a step to run
+first, and the extensions of other tools are then passed on to plugins like any
+other that forge does not read.
+
 It takes paths, folders (every `.json` file below them, except hidden ones and
 those in a `node_modules`) and quoted glob patterns, which are taken as they
 are written, and rewrites each file in place. It prints a line for each file

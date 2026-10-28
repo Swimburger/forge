@@ -65,12 +65,13 @@ src/
 ## Migration
 
 - Run `forge normalize` before `forge` reads a document written with vendor keys, with `--leave-old-extensions` where something else still reads them. A pipeline is `cat spec.json | forge normalize - | forge - --target ts --out sdk`.
-- A document that is not normalized is not an error: `forge` finds no method names in it, and so no methods.
+- Until the release that makes `forge normalize` a step to run first, the `forge` command does the same rewrite in memory when it reads a document, so one that has not been through it builds as before. It costs a pass over the document, and stops in that release; the core never reads anything but native keys.
+- After that release, a document that is not normalized is not an error: `forge` finds no method names in it, and so no methods.
 - Keys that are left are ordinary extensions, so plugins see them.
 
 ## Alternatives considered
 
 - **A runtime fallback behind a feature**, native keys first and vendor keys for what has none: it costs tiers in the reader and a vendor key that diverges from the native one beside it. Rejected for an explicit rewrite.
 - **Resolving after parsing, in the engine**: it must retain every extension of a large document.
-- **Normalizing in memory before every `generate`**: a pass over the document on every run, to save one in CI.
+- **Normalizing in memory before every `generate`, for good**: a pass over the document on every run, to save one in CI. Kept for now as a bridge, and not as the design.
 - **A `Vendor` trait** per tool: no primitive overlaps across vendors, so the table only grows rows.

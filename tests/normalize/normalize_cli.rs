@@ -697,3 +697,209 @@ fn a_file_in_a_folder_that_cannot_be_written_to_is_rewritten_in_place() {
     succeeded(&out);
     assert_eq!(fs::read_to_string(&file).unwrap(), NATIVE);
 }
+
+/// Every file below `dir`, by its path below it.
+fn files(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut found = std::collections::BTreeMap::new();
+    let mut folders = vec![dir.to_owned()];
+    while let Some(folder) = folders.pop() {
+        for entry in fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                found.insert(path.strip_prefix(dir).unwrap().to_owned(), fs::read(&path).unwrap());
+            }
+        }
+    }
+    found
+}
+
+const OF_ANOTHER_TOOL: &str = r#"{"openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "paths": {"/a": {"get": {
+  "x-fern-sdk-group-name": ["things", "parts"], "x-fern-sdk-method-name": "list", "x-fern-availability": "beta",
+  "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"type": "object",
+    "properties": {"id": {"type": "string"}, "secret": {"type": "string", "x-sensitive": true}}}}}}}}}}}"#;
+
+const NATIVE_TWIN: &str = r#"{"openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "paths": {"/a": {"get": {
+  "x-forge-group-name": "things.parts", "x-forge-method-name": "list", "x-forge-availability": "beta",
+  "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"type": "object",
+    "properties": {"id": {"type": "string"}, "secret": {"type": "string", "x-forge-sensitive": true}}}}}}}}}}}"#;
+
+/// Until the release that stops it, `forge` rewrites the keys of other tools in
+/// memory first, so a document that has not been through `forge normalize`
+/// builds what its native twin does.
+#[test]
+fn forge_builds_a_document_of_another_tool_as_it_builds_its_native_twin() {
+    let dir = dir("in-memory");
+    let (other, native) = (dir.join("other.json"), dir.join("native.json"));
+    fs::write(&other, OF_ANOTHER_TOOL).unwrap();
+    fs::write(&native, NATIVE_TWIN).unwrap();
+
+    for (spec, out) in [(&other, "sdk-other"), (&native, "sdk-native")] {
+        let out = dir.join(out);
+        succeeded(&forge(
+            &[spec.to_str().unwrap(), "--target", "ts", "--out", out.to_str().unwrap()],
+            "",
+        ));
+    }
+
+    let (other, native) = (files(&dir.join("sdk-other")), files(&dir.join("sdk-native")));
+    assert!(
+        !other.is_empty() && other == native,
+        "{:?} against {:?}",
+        other.keys(),
+        native.keys()
+    );
+    let client: Vec<&Vec<u8>> = other.values().collect();
+    assert!(
+        client
+            .iter()
+            .any(|text| text.windows(4).any(|window| window == b"list")),
+        "the method is built"
+    );
+    // The file is read, and not changed: that is for `forge normalize`.
+    assert_eq!(fs::read_to_string(dir.join("other.json")).unwrap(), OF_ANOTHER_TOOL);
+}
+
+#[test]
+fn forge_rewrites_standard_input_in_memory_too() {
+    let dir = dir("in-memory-stdin");
+    let out = dir.join("sdk");
+
+    let from_stdin = forge(
+        &["-", "--target", "ts", "--out", out.to_str().unwrap()],
+        OF_ANOTHER_TOOL,
+    );
+
+    succeeded(&from_stdin);
+    let native = dir.join("sdk-native");
+    succeeded(&forge(
+        &["-", "--target", "ts", "--out", native.to_str().unwrap()],
+        NATIVE_TWIN,
+    ));
+    let built = files(&out);
+    assert!(!built.is_empty() && built == files(&native));
+}
+
+/// The documents and the errors are those of `forge` before it left reading
+/// these keys to `forge normalize`: each message is what that `forge` said of
+/// the document, word for word, down to the line and the column.
+#[test]
+fn forge_fails_on_a_key_written_twice_in_the_words_it_always_used() {
+    let dir = dir("in-memory-error");
+    let base = |keys: &str| {
+        format!(
+            r#"{{"openapi":"3.0.3","info":{{"title":"t","version":"1"}},"paths":{{"/a":{{"get":{{{keys},"responses":{{"204":{{"description":"ok"}}}}}}}}}}}}"#
+        )
+    };
+    for (name, document, message) in [
+        (
+            "one-line",
+            base(r#""x-fern-sdk-group-name":["a"],"x-fern-sdk-method-name":"get","x-fern-ignore":false,"x-fern-ignore":true"#),
+            "duplicate field `x-fern-ignore` at line 1 column 174",
+        ),
+        (
+            "several-lines",
+            "{\n  \"openapi\": \"3.0.3\",\n  \"info\": {\"title\": \"t\", \"version\": \"1\"},\n  \"paths\": {\"/a\": {\"get\": {\n      \"x-fern-sdk-group-name\": [\"a\"],\n      \"x-fern-sdk-method-name\": \"get\",\n      \"x-fern-sdk-method-name\": \"again\",\n      \"responses\": {\"204\": {\"description\": \"ok\"}}}}}}\n".to_owned(),
+            "duplicate field `x-fern-sdk-method-name` at line 7 column 30",
+        ),
+        (
+            "three-copies",
+            base(r#""x-fern-sdk-group-name":["a"],"x-fern-sdk-method-name":"a","x-fern-sdk-method-name":"b","x-fern-sdk-method-name":"c""#),
+            "duplicate field `x-fern-sdk-method-name` at line 1 column 159",
+        ),
+        (
+            "not-ascii-before-it",
+            base(r#""description":"café 中","x-fern-sdk-group-name":["a"],"x-fern-sdk-method-name":"a","x-fern-sdk-method-name":"b""#),
+            "duplicate field `x-fern-sdk-method-name` at line 1 column 185",
+        ),
+    ] {
+        let spec = dir.join(format!("{name}.json"));
+        fs::write(&spec, document).unwrap();
+        let out = dir.join(format!("sdk-{name}"));
+
+        let run = forge(&[spec.to_str().unwrap(), "--target", "ts", "--out", out.to_str().unwrap()], "");
+
+        let err = failed(&run);
+        assert_eq!(err.trim_end(), format!("forge: {}: {message}", spec.display()), "{name}");
+        assert!(!out.exists(), "{name}: nothing was written");
+    }
+}
+
+/// A value that cannot be read is for `forge` to say, as it reads it, in the
+/// words it always used, and on the line and column it always gave.
+#[test]
+fn forge_says_where_a_value_cannot_be_read_as_it_always_did() {
+    let dir = dir("in-memory-unreadable");
+    let tail = r#""responses":{"204":{"description":"ok"}}}}}}"#;
+    for (name, document, message) in [
+        (
+            "vendor-value",
+            format!(
+                "{{\"openapi\":\"3.0.3\",\"info\":{{\"title\":\"t\",\"version\":\"1\"}},\"paths\":{{\"/a\":{{\"get\":{{\n\"x-fern-sdk-group-name\":[\"a\"],\n\"x-fern-sdk-method-name\":\"\\ud800\",\n{tail}"
+            ),
+            "unexpected end of hex escape at line 3 column 33",
+        ),
+        (
+            "native-value",
+            format!(
+                "{{\"openapi\":\"3.0.3\",\"info\":{{\"title\":\"t\",\"version\":\"1\"}},\"paths\":{{\"/a\":{{\"get\":{{\n\"x-forge-group-name\":\"a\",\n\"x-forge-method-name\":\"\\ud800\",\n{tail}"
+            ),
+            "unexpected end of hex escape at line 3 column 30",
+        ),
+        (
+            "key",
+            format!(
+                "{{\"openapi\":\"3.0.3\",\"info\":{{\"title\":\"t\",\"version\":\"1\"}},\"paths\":{{\"/a\":{{\"get\":{{\n\"x-fern-sdk-group-name\":[\"a\"],\n\"x\\ud800\":1,\n\"x-fern-sdk-method-name\":\"get\",\n{tail}"
+            ),
+            "unexpected end of hex escape at line 3 column 9",
+        ),
+    ] {
+        let spec = dir.join(format!("{name}.json"));
+        fs::write(&spec, document).unwrap();
+        let out = dir.join(format!("sdk-{name}"));
+
+        let run = forge(
+            &[spec.to_str().unwrap(), "--target", "ts", "--out", out.to_str().unwrap()],
+            "",
+        );
+
+        assert_eq!(
+            failed(&run).trim_end(),
+            format!("forge: {}: {message}", spec.display()),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn forge_says_nothing_of_a_document_that_it_could_rewrite() {
+    let dir = dir("in-memory-quiet");
+    let spec = dir.join("spec.json");
+    fs::write(&spec, OF_ANOTHER_TOOL).unwrap();
+    let out = dir.join("sdk");
+
+    let run = forge(
+        &[spec.to_str().unwrap(), "--target", "ts", "--out", out.to_str().unwrap()],
+        "",
+    );
+
+    succeeded(&run);
+    assert_eq!(text(&run.stderr), "", "forge says nothing of the document");
+    assert!(!files(&out).is_empty());
+}
+
+#[test]
+fn forge_names_the_file_when_the_document_is_not_json() {
+    let dir = dir("in-memory-not-json");
+    let spec = dir.join("spec.json");
+    fs::write(&spec, "openapi: 3.0.3").unwrap();
+    let out = dir.join("sdk");
+
+    let run = forge(
+        &[spec.to_str().unwrap(), "--target", "ts", "--out", out.to_str().unwrap()],
+        "",
+    );
+
+    assert!(failed(&run).contains("spec.json: "), "{}", text(&run.stderr));
+}

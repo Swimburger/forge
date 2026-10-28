@@ -316,6 +316,37 @@ fn create_private(path: &Path) -> io::Result<fs::File> {
     options.open(path)
 }
 
+/// Rewrites the extensions other tools write in the document `json` into the
+/// native ones, in memory, as `forge normalize` would in a file.
+///
+/// A key written twice, which it has to leave, is an error here, worded as it
+/// was when `forge` read those keys itself. `forge normalize` goes on and says
+/// it, and this does not say anything else of the document, as `forge` has not
+/// before. A value it cannot read is left for `forge` to say, as it reads it.
+///
+/// This is temporary. `forge` reads native keys only, and `forge normalize` is
+/// what is meant to come first. This keeps a document that has not been through
+/// it building as it did, until the release that stops doing it. One thing it
+/// does not keep: an error `forge` finds later in the document says the column
+/// of the document that was rewritten, which is not the one that was read where
+/// a key was renamed earlier on the same line. The line is the same.
+pub fn before_reading(json: Vec<u8>) -> Result<Vec<u8>, Err> {
+    let normalized = normalize(&json, &Options::default())?;
+    // The first in the document, as `forge` would have come to it.
+    let twice = (normalized.report.left.iter())
+        .filter(|left| left.written_twice())
+        .min_by_key(|left| (left.line, left.column));
+    if let Some(left) = twice {
+        return Err(format!(
+            "duplicate field `{}` at line {} column {}",
+            left.key, left.line, left.column
+        )
+        .into());
+    }
+    let edited = normalized.json.map(|edited| edited.to_vec());
+    Ok(edited.unwrap_or(json))
+}
+
 /// Says what in the document called `name` could not be rewritten, or was
 /// dropped for a native key that says something else.
 fn warn(name: &str, report: &Report) {
