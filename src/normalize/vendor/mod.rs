@@ -1,6 +1,6 @@
-//! The keys other tools' metadata is written with, and the native extension
-//! that each says the same as. This is the only code that holds them: `forge`
-//! normalization keeps isolated from the rest of Forge.
+//! The normalization mappings from keys other tools write to the native
+//! extensions that say the same thing. The current parser still reads the
+//! compatibility keys directly; moving it to native keys is a separate change.
 //!
 //! Each adapter, [`cloudflare`], [`deprecated`], [`fern`] and [`stainless`], is
 //! a table per kind of object that maps its compatibility keys onto native
