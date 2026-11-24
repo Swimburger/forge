@@ -2,7 +2,7 @@
 
 `forge generate openapi.json --target http-file --out requests` generates `.http` request files from an OpenAPI document: groups become folders, and each endpoint becomes its own `.http` file. This document specifies the output format, how Forge's model maps onto HTTP requests, and the implementation plan for the built-in Rust target.
 
-The generated files use the portable subset of the `.http` format shared by JetBrains HTTP Client (`ijhttp`), Visual Studio, VS Code REST Client, `httpyac`, and `kulala`. Each file is self-contained with file-level `@var` declarations and requires no generated environment file.
+The generated files use the portable subset of the `.http` format shared by JetBrains HTTP Client (`ijhttp`), Visual Studio, VS Code REST Client, `httpyac`, and `kulala`. Each file is self-contained with file-level `@var` declarations and requires no generated environment file. (Binary uploads use `< ./file.bin` file redirection, which works in JetBrains HTTP Client, VS Code REST Client, `httpyac`, and `kulala`; Visual Studio users replace it with inline content.)
 
 ## Contents
 
@@ -74,7 +74,7 @@ The identifier joins the group path and method name, each in `camelCase`, with `
 | `projects`         | `upload` | `application/json` (1 of 2)          | `projects_upload_json`              |
 | `projects`         | `upload` | `multipart/form-data` (2 of 2)       | `projects_upload_multipartFormData` |
 
-When a method emits multiple request blocks (one per media type), a `camelCase` suffix derived from the base media type's subtype (stripping any `;` parameters) is appended: `application/json` becomes `json`, `multipart/form-data` becomes `multipartFormData`, `application/x-www-form-urlencoded` becomes `xWwwFormUrlencoded`, and `*/*` becomes `any`. If two blocks in the same file produce the same `# @name`, a numeric suffix (`_2`, `_3`, ...) disambiguates subsequent blocks.
+When a method emits multiple request blocks (one per media type), a `camelCase` suffix derived from the base media type's subtype (stripping any `;` parameters) is appended: `application/json` becomes `json`, `multipart/form-data` becomes `multipartFormData`, `application/x-www-form-urlencoded` becomes `xWwwFormUrlencoded`, and `*/*` becomes `any`. Non-ASCII characters are stripped from segments, a leading digit is prefixed with `_`, and if two blocks in the same file produce the same `# @name`, a numeric suffix (`_2`, `_3`, ...) disambiguates subsequent blocks.
 
 ## Variables and secrets
 
@@ -92,12 +92,12 @@ Each `.http` file declares its own variables at the top, below the generated hea
 
 - **`@baseUrl`:** Always declared. Its value is `forge.base_url` with any trailing `/` removed. When `forge.base_url` is empty, it falls back to `http://localhost:8080` so an accidental send never transmits headers or credentials to an external host.
 - **Path parameters:** Every non-sensitive path parameter of the endpoint is declared once as `@<var> = <value>`, in path template order.
-  - Variable names are derived from `field.name().snake()` (ASCII lowercase letters, digits, and `_`, prefixed with `_` if starting with a digit). This avoids `.`, `-`, or brackets in `{{var}}`, which break `.http` parsers or collide with request-chaining syntax. If two parameters in the same file sanitize to the same variable name, a numeric suffix (`_2`, `_3`, ...) disambiguates subsequent ones.
-  - Variable values follow this priority:
+  - Variable names are derived from `field.name().snake()` (ASCII lowercase letters, digits, and `_`, prefixed with `_` if starting with a digit). This avoids `.`, `-`, or brackets in `{{var}}`, which break `.http` parsers or collide with request-chaining syntax. When the operation does not declare an `Authorization` header, `token` is reserved so a path parameter `{token}` becomes `token_2` instead of shadowing `# Authorization: Bearer {{token}}`. If two parameters in the same file sanitize to the same variable name, a numeric suffix (`_2`, `_3`, ...) disambiguates subsequent ones.
+  - Variable values follow this priority (with `default` and `enum` values percent-encoded, and empty values falling back to `<wire_name>`):
     1. `field.default()` if present, formatted as a scalar string.
     2. First value of `Type::Enum` (unwrapping `Model` / nullable `Union`).
     3. Typed scalar placeholder for `Uuid`, `DateTime`, `Date`, `Bytes`, `Number`, or `Boolean`.
-    4. `<wire_name>` for plain `String` or `Unknown` (for example `<project_id>`).
+    4. `<wire_name>` for plain `String`, `Unknown`, or composite types (for example `<project_id>`).
 
 ### Secrets
 
@@ -106,8 +106,9 @@ Generated `.http` files never declare `@token = ...` or any `@<secret> = ...` va
 Instead, secret values are referenced as plain undeclared `{{...}}` placeholders so each client resolves them from its own gitignored secret store (such as `http-client.private.env.json` in JetBrains, Visual Studio, and `kulala`; `.env` in `httpyac` and `kulala`; or `.vscode/settings.json` in VS Code REST Client):
 
 - Unauthenticated placeholder auth header: `# Authorization: Bearer {{token}}`.
-- Any path parameter, query parameter, header, or body field with `field.is_sensitive()` (`x-forge-sensitive: true`): referenced as `{{<var>}}` with no `@<var>` declaration at the top of the file.
+- Any path parameter, query parameter, header, or body field with `field.is_sensitive()` (`x-forge-sensitive: true`): referenced as `{{<var>}}` with no `@<var>` declaration at the top of the file. If a sensitive query/header/body variable would collide with a declared `@var` or the reserved auth `token`, it is suffixed (`_secret`, `_secret_2`, ...).
 - Whenever a file references one or more undeclared secret variables, a `# Secret: supply {{...}} via your HTTP client's environment.` comment is written in the file header.
+- Non-sensitive literal `default` and `enum` values neutralize `{{` to `{ {` so untrusted specs cannot inject `.http` client template expressions.
 
 Forge does not model OpenAPI `securitySchemes` or operation `security`, and this target does not extend Forge's model to add them.
 
@@ -143,11 +144,11 @@ Each request block has the following sections in order, with no blank lines betw
 1. **Heading:** `### <summary>`, where `summary` has `\r`, `\n`, and runs of whitespace collapsed to single spaces. Falls back to `### <METHOD> <path>` when `method.summary()` is empty. When the file contains multiple media-type blocks, appends ` (<media-type>)`.
 2. **Metadata comments:**
    - `# <METHOD> <path>`
-   - `# <description>` with `\r` stripped and every line prefixed with `# ` (blank lines become `#`; omitted if empty or identical to `summary`)
+   - `# <description>` with `\r\n` and bare `\r` normalized to `\n` and every line prefixed with `# ` (lines whose trimmed content starts with `@` use `## ` to avoid directive injection; blank lines become `#`; omitted if empty or identical to `summary`)
    - `# Availability: <stage>` (when present)
    - `# @deprecated` (when `method.is_deprecated()`)
    - `# Hidden` (when `method.is_hidden()`)
-   - `# Warning: <confirmation>` (when `method.confirmation()` is `Some`, prefixed on every line if multiline)
+   - `# Warning: <confirmation>` (when `method.confirmation()` is `Some`, with subsequent lines `# `-prefixed and `@`-leading lines neutralized with `## `)
    - `# Optional query: ...` (when the method has optional query parameters)
    - `# @name <id>` (always the line immediately before the request line)
 3. **Request line (single line):** `<METHOD> {{baseUrl}}<path>[?<required-query>]`
@@ -194,8 +195,8 @@ Each `Content` in `method.body().contents()` is encoded using the lowercase base
 
 - **JSON (`content.is_json()`):** Pretty-printed 2-space indented valid JSON synthesized from `content.ty()`. All non-`read_only` fields (required and optional) are included, one property per line, with no comments inside the JSON body so every `.http` client transmits valid JSON verbatim.
 - **`application/x-www-form-urlencoded`:** Percent-encoded `key=value` pairs joined with `&` for non-`read_only` fields (sorted by `wire_name`), or a synthesized scalar for non-object schemas.
-- **`multipart/form-data`:** Delimited with `--<boundary>` and closing `--<boundary>--` (default boundary `ForgeBoundary`). For object schemas (unwrapping `Model`, `Intersection`, and nullable `Union`), non-`read_only` fields sorted by `wire_name` produce parts:
-  - `Scalar::Binary` (unwrapping `Model` and nullable `Union`) emits a file part:
+- **`multipart/form-data`:** Delimited with `--<boundary>` and closing `--<boundary>--` (default boundary `ForgeBoundary`, automatically incremented if any part body contains `--<boundary>`). For object schemas (unwrapping `Model`, `Intersection`, and nullable `Union`), non-`read_only` fields sorted by `wire_name` produce parts:
+  - `Scalar::Binary` (unwrapping `Model` and nullable `Union`) emits a file part with a sanitized filename stem (`<sanitized_wire_name>.bin`) and escaped `Content-Disposition` `name`:
     ```http
     --ForgeBoundary
     Content-Disposition: form-data; name="file"; filename="file.bin"
@@ -216,27 +217,27 @@ Forge does not currently expose OpenAPI `example` or `examples`, so placeholder 
 
 ### Type mapping
 
-| Source / Type                     | JSON value                                                                                                                                                                                               | Scalar / URL / form value                           |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `field.is_sensitive()`            | `"{{<var>}}"`                                                                                                                                                                                            | `{{<var>}}`                                         |
-| `field.default()` (non-sensitive) | Written verbatim (whole finite `f64` as integer)                                                                                                                                                         | Formatted as string (whole finite `f64` as integer) |
-| `Scalar::Null`                    | `null`                                                                                                                                                                                                   | `null`                                              |
-| `Scalar::Boolean`                 | `false`                                                                                                                                                                                                  | `false`                                             |
-| `Scalar::String`                  | `"string"`                                                                                                                                                                                               | `string` (or `<wire_name>` for path `@var`)         |
-| `Scalar::Uuid`                    | `"00000000-0000-0000-0000-000000000000"`                                                                                                                                                                 | `00000000-0000-0000-0000-000000000000`              |
-| `Scalar::DateTime`                | `"2026-01-01T00:00:00Z"`                                                                                                                                                                                 | `2026-01-01T00:00:00Z`                              |
-| `Scalar::Date`                    | `"2026-01-01"`                                                                                                                                                                                           | `2026-01-01`                                        |
-| `Scalar::Bytes`                   | `"c3RyaW5n"`                                                                                                                                                                                             | `c3RyaW5n`                                          |
-| `Scalar::Binary`                  | `"<binary>"`                                                                                                                                                                                             | `<binary>`                                          |
-| `Scalar::Number(Int* \| Uint*)`   | `0`                                                                                                                                                                                                      | `0`                                                 |
-| `Scalar::Number(Float \| Double)` | `0.0`                                                                                                                                                                                                    | `0.0`                                               |
-| `Scalar::Unknown`                 | `{}`                                                                                                                                                                                                     | `value` (or `<wire_name>` for path `@var`)          |
-| `Type::Enum(values)`              | `values[0]`                                                                                                                                                                                              | `values[0]` as string                               |
-| `Type::Array(arr)`                | `0` items if `max_items == Some(0)`, `2` if `min_items >= Some(2)`, else `1`                                                                                                                             | Per `exploded` rules                                |
-| `Type::Object(obj)`               | All non-`read_only` fields sorted by `wire_name`; if empty and `extra` is `Some(t)`, `{"key": synth(t)}`                                                                                                 | Per serialization rules                             |
-| `Type::Intersection(i)`           | Synthesize each member first; merge all resulting `Value::Object`s in order (else first non-null value)                                                                                                  | First member                                        |
-| `Type::Union(u)`                  | Discriminator: first case sorted by case string, injecting `discriminator.wire_name = case_key`. Otherwise: synthesize non-`Null` members and pick the lexicographically first by canonical JSON string. | Same                                                |
-| `Type::Model(m)`                  | Expand `m.ty()` with active cycle tracking                                                                                                                                                               | Same                                                |
+| Source / Type                     | JSON value                                                                                                                                                                                                                                                            | Scalar / URL / form value                           |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `field.is_sensitive()`            | `"{{<var>}}"`                                                                                                                                                                                                                                                         | `{{<var>}}`                                         |
+| `field.default()` (non-sensitive) | Written verbatim (whole finite `f64` as integer)                                                                                                                                                                                                                      | Formatted as string (whole finite `f64` as integer) |
+| `Scalar::Null`                    | `null`                                                                                                                                                                                                                                                                | `null`                                              |
+| `Scalar::Boolean`                 | `false`                                                                                                                                                                                                                                                               | `false`                                             |
+| `Scalar::String`                  | `"string"`                                                                                                                                                                                                                                                            | `string` (or `<wire_name>` for path `@var`)         |
+| `Scalar::Uuid`                    | `"00000000-0000-0000-0000-000000000000"`                                                                                                                                                                                                                              | `00000000-0000-0000-0000-000000000000`              |
+| `Scalar::DateTime`                | `"2026-01-01T00:00:00Z"`                                                                                                                                                                                                                                              | `2026-01-01T00:00:00Z`                              |
+| `Scalar::Date`                    | `"2026-01-01"`                                                                                                                                                                                                                                                        | `2026-01-01`                                        |
+| `Scalar::Bytes`                   | `"c3RyaW5n"`                                                                                                                                                                                                                                                          | `c3RyaW5n`                                          |
+| `Scalar::Binary`                  | `"<binary>"`                                                                                                                                                                                                                                                          | `<binary>`                                          |
+| `Scalar::Number(Int* \| Uint*)`   | `0`                                                                                                                                                                                                                                                                   | `0`                                                 |
+| `Scalar::Number(Float \| Double)` | `0.0`                                                                                                                                                                                                                                                                 | `0.0`                                               |
+| `Scalar::Unknown`                 | `{}`                                                                                                                                                                                                                                                                  | `value` (or `<wire_name>` for path `@var`)          |
+| `Type::Enum(values)`              | `values[0]`                                                                                                                                                                                                                                                           | `values[0]` as string                               |
+| `Type::Array(arr)`                | `0` items if `max_items == Some(0)`, `2` if `min_items >= Some(2)`, else `1`                                                                                                                                                                                          | Per `exploded` rules                                |
+| `Type::Object(obj)`               | All non-`read_only` fields sorted by `wire_name`; if empty and `extra` is `Some(t)`, `{"key": synth(t)}`                                                                                                                                                              | Per serialization rules                             |
+| `Type::Intersection(i)`           | Probe each member independently, sort by canonical JSON, and merge resulting `Value::Object`s (sensitive fields win on key overlap; else first non-null value)                                                                                                        | Synthesized via `synth_json`                        |
+| `Type::Union(u)`                  | Discriminator: first non-active case sorted by case string (or `null` when nullable and all cases are active), injecting `discriminator.wire_name = case_key`. Otherwise: probe non-`Null` members and pick the lexicographically first by `(canonical JSON, nodes)`. | Same                                                |
+| `Type::Model(m)`                  | Expand `m.ty()` with active cycle tracking                                                                                                                                                                                                                            | Same                                                |
 
 ### Number formatting for `Json::Number(f64)`
 
@@ -256,7 +257,7 @@ Real-world specs contain both cyclic models (`Node -> Node`) and wide DAG diamon
 
 ## Determinism and errors
 
-- Every collection whose order Forge leaves unspecified (`Object::fields`, `Discriminator::cases`, `Union::members`) is deterministically ordered before emission.
+- Every collection whose order Forge leaves unspecified (`Object::fields`, `Discriminator::cases`, `Union::members`, `Intersection::members`) is deterministically ordered before emission.
 - No timestamps, random values, or generator version numbers appear in generated files.
 - `forge::write` validates relative paths and rejects duplicate output paths.
 - Windows reserved device names (`con`, `prn`, `aux`, `nul`, `com1`–`com9`, `lpt1`–`lpt9`) are a known filesystem constraint shared with the other built-in targets.
@@ -277,7 +278,7 @@ No new Cargo dependencies are required (`serde_json` with `preserve_order`, `ray
 - **`src/bin/forge/main.rs`:**
   - Declare `mod http_file;`.
   - Change `#[strum(serialize_all = "lowercase")]` on `enum Target` to `#[strum(serialize_all = "kebab-case")]` (preserves `ts`, `capnweb`, and `mcp` unchanged) and add `HttpFile`.
-  - Wire `Target::HttpFile => run_plugin(&http_file::Generator, ...)` in `generate_from_path` and `Target::HttpFile => forge::write(out, http_file::Generator.generate(forge)?)` in `run_plugin_on`.
+  - Wire `Target::HttpFile => run_plugin(&http_file::Generator, spec, out)` in `generate`.
   - Update the top-level doc comment and `--target` help text in `GenerateArgs`.
   - Add a `subcommands_are_parsed` assertion for `--target http-file`.
 
@@ -288,16 +289,16 @@ Create `src/bin/forge/http_file.rs` and two submodules:
 1. **`src/bin/forge/http_file.rs`**
    - `pub struct Generator;` implementing `forge::Plugin` with `type File = HttpFile;`.
    - `pub struct HttpFile { path: String, content: String }` implementing `forge::File`.
-   - Collect all `(Group<'_>, Method<'_>)` pairs from `forge.groups()` and render every endpoint file in parallel with `rayon::prelude::*`.
+   - Collect all `Method<'_>` from `forge.groups()` and render every endpoint file in parallel with `rayon::prelude::*`.
    - Path builder: `[...group.path().map(Name::kebab), format!("{}.http", method.name().kebab())].join("/")`.
 
 2. **`src/bin/forge/http_file/synth.rs`**
-   - `SynthCtx`: tracks `depth: usize`, `nodes: usize`, `active_models: HashSet<Model<'f>>`, and `secrets: BTreeSet<String>` (recording any sensitive `{{var}}` referenced while synthesizing a body so the file header lists it).
+   - `SynthCtx`: tracks `depth: usize`, `nodes: usize`, `active_models: HashSet<Model<'f>>`, `reserved_vars: HashSet<String>`, and `secrets: BTreeSet<String>` (recording any sensitive `{{var}}` referenced while synthesizing a body so the file header lists it).
    - `synth_json(ty: Type<'f>, field: Option<Field<'f>>, ctx: &mut SynthCtx<'f>) -> serde_json::Value`:
-     - Implements the synthesis table, `read_only` filtering, `default` conversion with integer-safe `Json::Number(f64)` handling, `Intersection` object merge, `Discriminator` case selection + property injection, canonical `Union` ordering, cycle guard, `MAX_DEPTH = 5`, and `MAX_NODES = 250`.
-   - `synth_scalar(ty: Type<'f>, field: Option<Field<'f>>, path_placeholder: Option<&str>, ctx: &mut SynthCtx<'f>) -> String`.
+     - Implements the synthesis table, `read_only` filtering, `default` conversion with integer-safe `Json::Number(f64)` handling, order-independent `Intersection` object merge, `Discriminator` case selection + property injection, canonical `Union` ordering, cycle guard, `MAX_DEPTH = 5`, and `MAX_NODES = 250`.
+   - `synth_scalar(ty: Type<'f>, field: Option<Field<'f>>, path_wire_name: Option<&str>, ctx: &mut SynthCtx<'f>) -> ScalarVal`.
    - `unwrap_type(ty: Type<'f>) -> Type<'f>`: unwraps `Model` and nullable `Union` (with cycle guard) for multipart binary detection and query/form classification.
-   - `sanitize_var_name(name: &Name) -> String` and a per-file `VarScope` deduplicator.
+   - `sanitize_var_name(name: &Name, wire_name: &str) -> String` and a per-file `VarScope` deduplicator.
    - `percent_encode(s: &str) -> String` (RFC 3986 unreserved set).
 
 3. **`src/bin/forge/http_file/render.rs`**

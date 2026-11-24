@@ -9,18 +9,19 @@ use serde_json::{Map, Number, Value};
 /// Maximum nesting depth when synthesizing request bodies.
 pub(super) const MAX_DEPTH: usize = 5;
 
-/// Maximum number of JSON values synthesized in a single request body.
+/// Maximum number of JSON containers (objects and arrays) synthesized in a
+/// single request body.
 pub(super) const MAX_NODES: usize = 250;
 
 /// Per-body synthesis state: nesting depth, container budget, cycle guard,
-/// declared non-secret variable names to avoid shadowing, and any undeclared
-/// secret variable names referenced.
+/// reserved variable names to avoid shadowing, and any undeclared secret
+/// variable names referenced.
 #[derive(Clone, Default)]
 pub(super) struct SynthCtx<'f> {
     depth: usize,
     nodes: usize,
     active_models: HashSet<Model<'f>>,
-    declared_vars: HashSet<String>,
+    reserved_vars: HashSet<String>,
     pub(super) secrets: BTreeSet<String>,
 }
 
@@ -29,9 +30,9 @@ impl<'f> SynthCtx<'f> {
         Self::default()
     }
 
-    pub(super) fn with_declared(declared_vars: HashSet<String>) -> Self {
+    pub(super) fn with_reserved(reserved_vars: HashSet<String>) -> Self {
         Self {
-            declared_vars,
+            reserved_vars,
             ..Self::default()
         }
     }
@@ -49,17 +50,17 @@ impl<'f> SynthCtx<'f> {
     }
 
     /// Allocates a secret variable name that does not collide with any
-    /// declared non-sensitive `@var` in the same file.
+    /// reserved variable (declared non-sensitive `@var` or auth `token`).
     pub(super) fn secret_var(&mut self, name: &Name, wire_name: &str) -> String {
         let base = sanitize_var_name(name, wire_name);
-        let var = if !self.declared_vars.contains(&base) {
+        let var = if !self.reserved_vars.contains(&base) {
             base
         } else {
             let mut chosen = format!("{base}_secret");
-            if self.declared_vars.contains(&chosen) {
+            if self.reserved_vars.contains(&chosen) {
                 for n in 2u32.. {
                     let candidate = format!("{base}_secret_{n}");
-                    if !self.declared_vars.contains(&candidate) {
+                    if !self.reserved_vars.contains(&candidate) {
                         chosen = candidate;
                         break;
                     }
@@ -101,6 +102,37 @@ impl VarScope {
     }
 }
 
+/// Returns an ASCII `[a-z0-9_]+` variable name, prefixed with `_` if it starts
+/// with a digit.
+pub(super) fn sanitize_var_name(name: &Name, wire_name: &str) -> String {
+    let raw = if name.is_empty() {
+        wire_name.to_ascii_lowercase()
+    } else {
+        name.snake()
+    };
+    let mut out = String::with_capacity(raw.len());
+    let mut prev_underscore = false;
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            prev_underscore = false;
+        } else if !out.is_empty() && !prev_underscore {
+            out.push('_');
+            prev_underscore = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.is_empty() {
+        return "var".to_owned();
+    }
+    if out.as_bytes()[0].is_ascii_digit() {
+        out.insert(0, '_');
+    }
+    out
+}
+
 /// Sanitizes `wire_name` into a safe single path segment filename stem
 /// (`[a-zA-Z0-9_-]`), preventing `/` or `..` traversal in `< ./<file>.bin`.
 pub(super) fn sanitize_filename_stem(wire_name: &str) -> String {
@@ -137,33 +169,16 @@ pub(super) fn normalize_lf(s: &str) -> String {
     s.replace("\r\n", "\n").replace('\r', "\n")
 }
 
-/// Returns an ASCII `[a-z0-9_]+` variable name, prefixed with `_` if it starts
-/// with a digit.
-pub(super) fn sanitize_var_name(name: &Name, wire_name: &str) -> String {
-    let raw = if name.is_empty() {
-        wire_name.to_ascii_lowercase()
-    } else {
-        name.snake()
-    };
-    let mut out = String::with_capacity(raw.len());
-    let mut prev_underscore = false;
-    for ch in raw.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            prev_underscore = false;
-        } else if !out.is_empty() && !prev_underscore {
-            out.push('_');
-            prev_underscore = true;
-        }
+/// Breaks `{{` sequences inside untrusted literal values (defaults and enums)
+/// so `.http` clients do not evaluate injected template expressions such as
+/// `{{$processEnv SECRET}}`.
+pub(super) fn neutralize_templates(s: &str) -> String {
+    if !s.contains("{{") {
+        return s.to_owned();
     }
-    while out.ends_with('_') {
-        out.pop();
-    }
-    if out.is_empty() {
-        return "var".to_owned();
-    }
-    if out.as_bytes()[0].is_ascii_digit() {
-        out.insert(0, '_');
+    let mut out = s.to_owned();
+    while out.contains("{{") {
+        out = out.replace("{{", "{ {");
     }
     out
 }
@@ -268,55 +283,72 @@ pub(super) fn binary_array_count(ty: Type<'_>) -> Option<usize> {
 /// to an object shape.
 pub(super) fn object_fields<'f>(ty: Type<'f>) -> Option<(Vec<Field<'f>>, Option<Type<'f>>)> {
     let mut seen = HashSet::new();
-    let mut fields: BTreeMap<&'f str, Field<'f>> = BTreeMap::new();
-    let mut extra: Option<Type<'f>> = None;
-    if !collect_object_fields(ty, &mut seen, &mut fields, &mut extra) {
+    let mut candidates: BTreeMap<&'f str, Vec<Field<'f>>> = BTreeMap::new();
+    let mut extras: Vec<Type<'f>> = Vec::new();
+    if !collect_object_fields(ty, &mut seen, &mut candidates, &mut extras) {
         return None;
     }
-    Some((fields.into_values().collect(), extra))
+
+    let fields = candidates
+        .into_values()
+        .map(|mut list| {
+            if list.len() == 1 {
+                return list.pop().expect("len is 1");
+            }
+            // Strict total order: sensitive always wins, then default present,
+            // then canonical JSON representation.
+            list.into_iter()
+                .min_by_key(|&f| {
+                    let mut probe = SynthCtx::new();
+                    let json = serde_json::to_string(&synth_json(f.ty(), Some(f), &mut probe)).unwrap_or_default();
+                    (!f.is_sensitive(), f.default().is_none(), json)
+                })
+                .expect("non-empty")
+        })
+        .collect();
+
+    let extra = if extras.len() <= 1 {
+        extras.pop()
+    } else {
+        extras.into_iter().min_by_key(|&t| {
+            let mut probe = SynthCtx::new();
+            serde_json::to_string(&synth_json(t, None, &mut probe)).unwrap_or_default()
+        })
+    };
+
+    Some((fields, extra))
 }
 
 fn collect_object_fields<'f>(
     ty: Type<'f>,
     seen: &mut HashSet<Model<'f>>,
-    fields: &mut BTreeMap<&'f str, Field<'f>>,
-    extra: &mut Option<Type<'f>>,
+    fields: &mut BTreeMap<&'f str, Vec<Field<'f>>>,
+    extras: &mut Vec<Type<'f>>,
 ) -> bool {
     match ty {
         Type::Model(m) => {
             if !seen.insert(m) {
                 return false;
             }
-            let ok = collect_object_fields(m.ty(), seen, fields, extra);
+            let ok = collect_object_fields(m.ty(), seen, fields, extras);
             seen.remove(&m);
             ok
         }
         Type::Object(obj) => {
             for field in obj.fields() {
                 if !field.is_read_only() {
-                    fields
-                        .entry(field.wire_name())
-                        .and_modify(|existing| {
-                            // Prefer a field with a default (or sensitive flag) deterministically
-                            // when an intersection's unordered members declare the same wire name.
-                            if (existing.default().is_none() && field.default().is_some())
-                                || (!existing.is_sensitive() && field.is_sensitive())
-                            {
-                                *existing = field;
-                            }
-                        })
-                        .or_insert(field);
+                    fields.entry(field.wire_name()).or_default().push(field);
                 }
             }
-            if extra.is_none() {
-                *extra = obj.extra();
+            if let Some(extra) = obj.extra() {
+                extras.push(extra);
             }
             true
         }
         Type::Intersection(inter) => {
             let mut any = false;
             for member in inter.members() {
-                if collect_object_fields(member, seen, fields, extra) {
+                if collect_object_fields(member, seen, fields, extras) {
                     any = true;
                 }
             }
@@ -328,7 +360,7 @@ fn collect_object_fields<'f>(
                 .filter(|m| !matches!(m, Type::Scalar(Scalar::Null)))
                 .collect();
             if non_null.len() == 1 {
-                collect_object_fields(non_null[0], seen, fields, extra)
+                collect_object_fields(non_null[0], seen, fields, extras)
             } else {
                 false
             }
@@ -352,7 +384,7 @@ pub(super) fn synth_json<'f>(ty: Type<'f>, field: Option<Field<'f>>, ctx: &mut S
     match ty {
         Type::Scalar(s) => synth_scalar_json(s),
         Type::Enum(e) => match e.values().next() {
-            Some(EnumValue::String(s)) => Value::String(s.to_owned()),
+            Some(EnumValue::String(s)) => Value::String(neutralize_templates(s)),
             Some(EnumValue::Number(n)) => Value::Number(json_number(n)),
             Some(EnumValue::Boolean(b)) => Value::Bool(b),
             None => Value::Null,
@@ -376,7 +408,11 @@ pub(super) fn synth_json<'f>(ty: Type<'f>, field: Option<Field<'f>>, ctx: &mut S
         Type::Object(obj) => synth_object_json(obj, ctx),
         Type::Model(m) => {
             if !ctx.active_models.insert(m) {
-                return Value::Object(Map::new());
+                return if is_nullable_union(m.ty()) {
+                    Value::Null
+                } else {
+                    Value::Object(Map::new())
+                };
             }
             let value = synth_json(m.ty(), None, ctx);
             ctx.active_models.remove(&m);
@@ -413,65 +449,157 @@ fn synth_intersection_json<'f>(members: impl Iterator<Item = Type<'f>>, ctx: &mu
     if ctx.depth >= MAX_DEPTH || ctx.nodes >= MAX_NODES {
         return Value::Object(Map::new());
     }
-    let mut synthesized: Vec<(String, Value)> = members
+    let start_nodes = ctx.nodes;
+
+    // Probe each member independently from the same baseline context so
+    // Forge's unspecified intersection member order cannot affect budget
+    // consumption or tie-breaking.
+    let mut probed: Vec<(String, usize, Value, BTreeSet<String>)> = members
         .map(|member| {
-            let val = synth_json(member, None, ctx);
+            let mut probe = SynthCtx {
+                depth: ctx.depth,
+                nodes: start_nodes,
+                active_models: ctx.active_models.clone(),
+                reserved_vars: ctx.reserved_vars.clone(),
+                secrets: BTreeSet::new(),
+            };
+            let val = synth_json(member, None, &mut probe);
             let key = serde_json::to_string(&val).unwrap_or_default();
-            (key, val)
+            let delta = probe.nodes.saturating_sub(start_nodes);
+            (key, delta, val, probe.secrets)
         })
         .collect();
-    // Forge leaves intersection member order unspecified; sort synthesized
-    // members canonically so overlapping keys merge deterministically.
-    synthesized.sort_by(|a, b| a.0.cmp(&b.0));
+    probed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
-    let mut merged: BTreeMap<String, Value> = BTreeMap::new();
-    let mut non_objects: Vec<Value> = Vec::new();
+    let mut merged: BTreeMap<String, (bool, Value)> = BTreeMap::new();
+    let mut non_objects: Vec<(Value, BTreeSet<String>)> = Vec::new();
+    let mut candidate_secrets: BTreeSet<String> = BTreeSet::new();
+    let mut total_delta: usize = 0;
     let mut saw_object = false;
 
-    for (_, val) in synthesized {
+    for (_, delta, val, member_secrets) in probed {
+        total_delta = total_delta.saturating_add(delta);
         match val {
             Value::Object(map) => {
                 saw_object = true;
                 for (k, v) in map {
-                    merged.entry(k).or_insert(v);
+                    let is_sens = is_secret_value(&v, &member_secrets);
+                    merged
+                        .entry(k)
+                        .and_modify(|(existing_sens, existing_val)| {
+                            // A sensitive placeholder always beats a non-sensitive literal.
+                            if !*existing_sens && is_sens {
+                                *existing_sens = true;
+                                *existing_val = v.clone();
+                            }
+                        })
+                        .or_insert((is_sens, v));
                 }
+                candidate_secrets.extend(member_secrets);
             }
             Value::Null => {}
-            other => non_objects.push(other),
+            other => non_objects.push((other, member_secrets)),
         }
     }
 
+    ctx.nodes = start_nodes.saturating_add(total_delta).min(MAX_NODES);
+
     if saw_object {
-        let map: Map<String, Value> = merged.into_iter().collect();
-        return Value::Object(map);
+        let map: Map<String, Value> = merged.into_iter().map(|(k, (_, v))| (k, v)).collect();
+        let result = Value::Object(map);
+        // Only record secrets that survived in the final merged value.
+        collect_referenced_secrets(&result, &candidate_secrets, &mut ctx.secrets);
+        return result;
     }
-    non_objects.into_iter().next().unwrap_or(Value::Null)
+
+    if let Some((val, member_secrets)) = non_objects.into_iter().next() {
+        collect_referenced_secrets(&val, &member_secrets, &mut ctx.secrets);
+        val
+    } else {
+        Value::Null
+    }
+}
+
+fn is_secret_value(val: &Value, secrets: &BTreeSet<String>) -> bool {
+    let Some(s) = val.as_str() else {
+        return false;
+    };
+    let Some(var) = s.strip_prefix("{{").and_then(|rest| rest.strip_suffix("}}")) else {
+        return false;
+    };
+    secrets.contains(var)
+}
+
+fn collect_referenced_secrets(val: &Value, candidates: &BTreeSet<String>, out: &mut BTreeSet<String>) {
+    match val {
+        Value::String(s) => {
+            if let Some(var) = s.strip_prefix("{{").and_then(|rest| rest.strip_suffix("}}"))
+                && candidates.contains(var)
+            {
+                out.insert(var.to_owned());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_referenced_secrets(item, candidates, out);
+            }
+        }
+        Value::Object(map) => {
+            for v in map.values() {
+                collect_referenced_secrets(v, candidates, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn synth_union_json<'f>(u: forge::Union<'f>, ctx: &mut SynthCtx<'f>) -> Value {
+    let has_null = u.members().any(|m| matches!(m, Type::Scalar(Scalar::Null)));
+
     if let Some(disc) = u.discriminator() {
         let mut cases: Vec<(&str, Type<'f>)> = disc.cases().collect();
         cases.sort_by_key(|&(case_key, _)| case_key);
-        if let Some((case_key, case_ty)) = cases.first().copied() {
+        if !cases.is_empty() {
+            // Prefer the first non-active discriminator case so recursive
+            // discriminated unions terminate cleanly; collapse to `null` when
+            // nullable and every case is currently active.
+            let chosen = cases
+                .iter()
+                .copied()
+                .find(|&(_, case_ty)| !is_active_model(case_ty, &ctx.active_models));
+            let Some((case_key, case_ty)) = chosen else {
+                if has_null {
+                    return Value::Null;
+                }
+                let (case_key, case_ty) = cases[0];
+                let mut val = synth_json(case_ty, None, ctx);
+                if let Value::Object(map) = &mut val {
+                    let mut sorted: BTreeMap<String, Value> = std::mem::take(map).into_iter().collect();
+                    sorted.insert(
+                        disc.wire_name().to_owned(),
+                        Value::String(neutralize_templates(case_key)),
+                    );
+                    *map = sorted.into_iter().collect();
+                }
+                return val;
+            };
             let mut val = synth_json(case_ty, None, ctx);
             if let Value::Object(map) = &mut val {
                 let mut sorted: BTreeMap<String, Value> = std::mem::take(map).into_iter().collect();
-                sorted.insert(disc.wire_name().to_owned(), Value::String(case_key.to_owned()));
+                sorted.insert(
+                    disc.wire_name().to_owned(),
+                    Value::String(neutralize_templates(case_key)),
+                );
                 *map = sorted.into_iter().collect();
             }
             return val;
         }
     }
 
-    let mut has_null = false;
-    let mut candidates = Vec::new();
-    for member in u.members() {
-        if matches!(member, Type::Scalar(Scalar::Null)) {
-            has_null = true;
-        } else {
-            candidates.push(member);
-        }
-    }
+    let candidates: Vec<Type<'f>> = u
+        .members()
+        .filter(|m| !matches!(m, Type::Scalar(Scalar::Null)))
+        .collect();
     if candidates.is_empty() {
         return Value::Null;
     }
@@ -489,7 +617,10 @@ fn synth_union_json<'f>(u: forge::Union<'f>, ctx: &mut SynthCtx<'f>) -> Value {
         let mut probe = ctx.clone();
         let val = synth_json(candidate, None, &mut probe);
         let key = serde_json::to_string(&val).unwrap_or_default();
-        if best.as_ref().is_none_or(|(best_key, _, _)| key < *best_key) {
+        if best
+            .as_ref()
+            .is_none_or(|(best_key, _, best_probe)| (&key, probe.nodes) < (best_key, best_probe.nodes))
+        {
             best = Some((key, val, probe));
         }
     }
@@ -499,6 +630,10 @@ fn synth_union_json<'f>(u: forge::Union<'f>, ctx: &mut SynthCtx<'f>) -> Value {
     } else {
         Value::Null
     }
+}
+
+fn is_nullable_union(ty: Type<'_>) -> bool {
+    matches!(ty, Type::Union(u) if u.members().any(|m| matches!(m, Type::Scalar(Scalar::Null))))
 }
 
 fn is_active_model<'f>(ty: Type<'f>, active: &HashSet<Model<'f>>) -> bool {
@@ -545,8 +680,8 @@ fn synth_scalar_json(scalar: Scalar) -> Value {
 /// Synthesizes a scalar value for path variables, query parameters, headers,
 /// form fields, or plain text bodies.
 ///
-/// When `path_wire_name` is `Some`, plain `String` and `Unknown` types render
-/// as `<wire_name>` instead of `string`/`value`.
+/// When `path_wire_name` is `Some`, plain `String`, `Unknown`, and composite
+/// types render as `<wire_name>` instead of `string`/`value`.
 pub(super) fn synth_scalar<'f>(
     ty: Type<'f>,
     field: Option<Field<'f>>,
@@ -559,22 +694,37 @@ pub(super) fn synth_scalar<'f>(
             return ScalarVal::TemplateVar(var);
         }
         if let Some(default) = f.default() {
-            return ScalarVal::Literal(normalize_lf(&format_json_scalar(default)));
+            let formatted = neutralize_templates(&normalize_lf(&format_json_scalar(default)));
+            return ScalarVal::Literal(formatted);
         }
     }
 
     match unwrap_type(ty) {
         Type::Scalar(s) => ScalarVal::Literal(synth_scalar_text(s, path_wire_name)),
         Type::Enum(e) => match e.values().next() {
-            Some(EnumValue::String(s)) => ScalarVal::Literal(s.to_owned()),
+            Some(EnumValue::String(s)) => ScalarVal::Literal(neutralize_templates(&normalize_lf(s))),
             Some(EnumValue::Number(n)) => ScalarVal::Literal(json_number(n).to_string()),
             Some(EnumValue::Boolean(b)) => ScalarVal::Literal(b.to_string()),
             None => ScalarVal::Literal("value".to_owned()),
         },
         Type::Array(arr) => synth_scalar(arr.elem(), None, path_wire_name, ctx),
+        Type::Object(_) | Type::Intersection(_) if path_wire_name.is_some() => {
+            // Avoid synthesizing nested fields (which could record phantom
+            // secrets) when a path parameter falls back to `<wire_name>`.
+            ScalarVal::Literal(format!("<{}>", path_wire_name.unwrap_or("param")))
+        }
         other => {
-            let val = synth_json(other, None, ctx);
-            ScalarVal::Literal(value_to_scalar_text(&val, path_wire_name))
+            let mut probe = ctx.clone();
+            let val = synth_json(other, None, &mut probe);
+            match &val {
+                Value::Array(_) | Value::Object(_) if path_wire_name.is_some() => {
+                    ScalarVal::Literal(format!("<{}>", path_wire_name.unwrap_or("param")))
+                }
+                _ => {
+                    *ctx = probe;
+                    ScalarVal::Literal(value_to_scalar_text(&val, path_wire_name))
+                }
+            }
         }
     }
 }
@@ -620,13 +770,13 @@ fn value_to_scalar_text(val: &Value, path_wire_name: Option<&str>) -> String {
 }
 
 /// Converts a `forge::Json` value into a `serde_json::Value`, emitting whole
-/// finite `f64` values as integers.
+/// finite `f64` values as integers and neutralizing `{{` templates in strings.
 pub(super) fn forge_json_to_value(json: &Json) -> Value {
     match json {
         Json::Null => Value::Null,
         Json::Bool(b) => Value::Bool(*b),
         Json::Number(n) => Value::Number(json_number(*n)),
-        Json::String(s) => Value::String(s.clone()),
+        Json::String(s) => Value::String(neutralize_templates(s)),
         Json::Array(items) => Value::Array(items.iter().map(forge_json_to_value).collect()),
         Json::Object(members) => Value::Object(
             members
@@ -638,13 +788,13 @@ pub(super) fn forge_json_to_value(json: &Json) -> Value {
 }
 
 /// Formats a `forge::Json` default value as scalar text (unquoted for strings,
-/// integer-formatted for whole finite numbers).
+/// integer-formatted for whole finite numbers, with `{{` neutralized).
 pub(super) fn format_json_scalar(json: &Json) -> String {
     match json {
         Json::Null => "null".to_owned(),
         Json::Bool(b) => b.to_string(),
         Json::Number(n) => json_number(*n).to_string(),
-        Json::String(s) => s.clone(),
+        Json::String(s) => neutralize_templates(s),
         Json::Array(_) | Json::Object(_) => {
             serde_json::to_string(&forge_json_to_value(json)).unwrap_or_else(|_| "value".to_owned())
         }

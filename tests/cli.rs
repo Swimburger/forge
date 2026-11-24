@@ -60,7 +60,7 @@ fn flags_are_required() {
 fn unknown_target() {
     let err = failure(generate(&["-", "--target", "go", "--out", "sdk"], SPEC));
     assert!(err.contains("invalid value 'go'"), "{err}");
-    assert!(err.contains("possible values: ts, capnweb"), "{err}");
+    assert!(err.contains("possible values: ts, capnweb, mcp, http-file"), "{err}");
 }
 
 #[test]

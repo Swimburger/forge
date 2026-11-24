@@ -203,6 +203,12 @@ mod tests {
                 panic!("{path} block {idx}: expected `# @name` before request line, got {name_line:?}")
             });
             assert!(
+                !req_name.is_empty()
+                    && (req_name.as_bytes()[0].is_ascii_alphabetic() || req_name.as_bytes()[0] == b'_')
+                    && req_name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+                "{path} block {idx}: invalid `# @name` identifier {req_name:?}"
+            );
+            assert!(
                 seen_names.insert(req_name.to_owned()),
                 "{path}: duplicate `# @name {req_name}`"
             );
@@ -983,5 +989,271 @@ mod tests {
             "{content}"
         );
         assert!(content.contains("< ./bad_name.bin\n"), "{content}");
+    }
+
+    #[test]
+    fn hardening_directives_templates_headers_boundaries_and_path_encoding() {
+        let forge = build(
+            r#"{
+              "openapi": "3.1.0",
+              "info": {"title": "t", "version": "1"},
+              "servers": [{"url": "https://api.example.com"}],
+              "paths": {
+                "/2fa/items with space/{slug}/{empty_def}/{obj_param}?fixed=1": {
+                  "post": {
+                    "x-forge-group-name": "2fa.café",
+                    "x-forge-method-name": "verify",
+                    "summary": "Verify",
+                    "description": "Verify\r@import ./evil.http\n  @no-redirect\nnormal line",
+                    "x-forge-require-confirmation": "Line1\r@timeout 1\nLine2",
+                    "parameters": [
+                      {"name": "slug", "in": "path", "required": true, "schema": {"type": "string", "default": "hello world?x=1"}},
+                      {"name": "empty_def", "in": "path", "required": true, "schema": {"type": "string", "default": ""}},
+                      {
+                        "name": "obj_param",
+                        "in": "path",
+                        "required": true,
+                        "schema": {"type": "object", "properties": {"s": {"type": "string", "x-forge-sensitive": true}}}
+                      },
+                      {"name": "token", "in": "query", "required": true, "schema": {"type": "string", "x-forge-sensitive": true}},
+                      {"name": "tags", "in": "query", "required": true, "explode": true, "schema": {"type": "array", "default": ["a b", "c"], "items": {"type": "string"}}},
+                      {"name": "ids", "in": "query", "required": false, "explode": false, "schema": {"type": "array", "default": [1, 2], "items": {"type": "integer"}}},
+                      {"name": "Bad:Header Name", "in": "header", "required": true, "schema": {"type": "array", "default": ["x", "y"], "items": {"type": "string"}}}
+                    ],
+                    "requestBody": {
+                      "content": {
+                        "multipart/form-data; boundary=\"Custom;Bound\"": {
+                          "schema": {
+                            "type": "object",
+                            "properties": {
+                              "evil": {"type": "string", "default": "line1\n--Custom;Bound\n### injected\n{{$processEnv SECRET}}"},
+                              "cfg": {"type": "object", "default": {"a": 1}, "properties": {"a": {"type": "integer"}}}
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": {
+                      "200": {
+                        "description": "ok",
+                        "content": {"application/*+json": {"schema": {"type": "string"}}}
+                      }
+                    }
+                  }
+                }
+              }
+            }"#,
+        );
+        let files = generate(&forge);
+        let content = &files["2fa/café/verify.http"];
+        // `# @name` is a valid ASCII identifier with leading `_`.
+        assert!(content.contains("# @name _2fa_caf_verify\n"), "{content}");
+        // Directive lines in description and confirmation are neutralized with `## `, and bare `\r` normalized.
+        assert!(content.contains("## @import ./evil.http\n"), "{content}");
+        assert!(content.contains("##   @no-redirect\n"), "{content}");
+        assert!(content.contains("## @timeout 1\n"), "{content}");
+        // Path `@var`s percent-encode spaces/delimiters, fall back on empty default, and don't leak phantom secrets from object path params.
+        assert!(content.contains("@slug = hello%20world%3Fx%3D1\n"), "{content}");
+        assert!(content.contains("@empty_def = <empty_def>\n"), "{content}");
+        assert!(content.contains("@obj_param = <obj_param>\n"), "{content}");
+        assert!(!content.contains("{{s}}"), "phantom secret leaked:\n{content}");
+        // Sensitive query param `token` does not alias auth `{{token}}`.
+        assert!(content.contains("token={{token_secret}}"), "{content}");
+        assert!(
+            content.contains("# Secret: supply {{token}}, {{token_secret}}"),
+            "{content}"
+        );
+        // Existing `?fixed=1` in path uses `&` for required query params; spaces in literal path encoded.
+        assert!(
+            content.contains("POST {{baseUrl}}/2fa/items%20with%20space/{{slug}}/{{empty_def}}/{{obj_param}}?fixed=1&token={{token_secret}}&tags=a%20b&tags=c\n"),
+            "{content}"
+        );
+        assert!(content.contains("# Optional query: ids=1,2\n"), "{content}");
+        // Header name stripped of `:` and space, array default comma-joined.
+        assert!(content.contains("BadHeaderName: x,y\n"), "{content}");
+        // Partial wildcard `application/*+json` is NOT emitted as Accept.
+        assert!(!content.contains("Accept:"), "{content}");
+        // Colliding multipart boundary automatically bumped; `###` and `{{` neutralized.
+        assert!(
+            content.contains("Content-Type: multipart/form-data; boundary=ForgeBoundary\n"),
+            "{content}"
+        );
+        assert!(content.contains(" ### injected\n"), "{content}");
+        assert!(content.contains("{ {$processEnv SECRET}}"), "{content}");
+        // Multipart structured part with default keeps `Content-Type: application/json`.
+        assert!(
+            content.contains(
+                "Content-Disposition: form-data; name=\"cfg\"\nContent-Type: application/json\n\n{\n  \"a\": 1\n}\n"
+            ),
+            "{content}"
+        );
+    }
+
+    #[test]
+    fn unions_intersections_overlapping_sensitivity_and_nullable_discriminated_recursion() {
+        let forge = build(
+            r##"{
+              "openapi": "3.1.0",
+              "info": {"title": "t", "version": "1"},
+              "components": {
+                "schemas": {
+                  "Expr": {
+                    "oneOf": [
+                      {"$ref": "#/components/schemas/Add"},
+                      {"$ref": "#/components/schemas/Sub"}
+                    ],
+                    "discriminator": {
+                      "propertyName": "op",
+                      "mapping": {
+                        "add": "#/components/schemas/Add",
+                        "sub": "#/components/schemas/Sub"
+                      }
+                    },
+                    "nullable": true
+                  },
+                  "Add": {
+                    "type": "object",
+                    "properties": {
+                      "op": {"type": "string"},
+                      "left": {"$ref": "#/components/schemas/Expr"}
+                    }
+                  },
+                  "Sub": {
+                    "type": "object",
+                    "properties": {
+                      "op": {"type": "string"},
+                      "right": {"$ref": "#/components/schemas/Expr"}
+                    }
+                  },
+                  "PlainA": {
+                    "type": "object",
+                    "properties": {"secret": {"type": "string", "default": "plain"}}
+                  },
+                  "SensB": {
+                    "type": "object",
+                    "properties": {"secret": {"type": "string", "x-forge-sensitive": true}}
+                  },
+                  "Merged": {
+                    "allOf": [
+                      {"$ref": "#/components/schemas/PlainA"},
+                      {"$ref": "#/components/schemas/SensB"}
+                    ]
+                  },
+                  "Undisc": {
+                    "oneOf": [
+                      {"type": "object", "properties": {"z": {"type": "string", "x-forge-sensitive": true}}},
+                      {"type": "object", "properties": {"a": {"type": "integer", "enum": [42, 7]}}}
+                    ]
+                  }
+                }
+              },
+              "paths": {
+                "/expr": {
+                  "post": {
+                    "operationId": "expr",
+                    "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Expr"}}}},
+                    "responses": {"200": {"description": "ok"}}
+                  }
+                },
+                "/merged": {
+                  "post": {
+                    "operationId": "merged",
+                    "requestBody": {
+                      "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/Merged"}},
+                        "application/x-www-form-urlencoded": {"schema": {"$ref": "#/components/schemas/Merged"}}
+                      }
+                    },
+                    "responses": {"200": {"description": "ok"}}
+                  }
+                },
+                "/undisc": {
+                  "post": {
+                    "operationId": "undisc",
+                    "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Undisc"}}}},
+                    "responses": {"200": {"description": "ok"}}
+                  }
+                }
+              }
+            }"##,
+        );
+        let files = generate(&forge);
+        // Nullable recursive discriminated union collapses inner `left` to `null`.
+        let expr = &files["expr.http"];
+        assert!(expr.contains("\"left\": null"), "{expr}");
+        assert!(expr.contains("\"op\": \"add\""), "{expr}");
+
+        // Overlapping intersection field preserves sensitivity in both JSON and form-urlencoded.
+        let merged = &files["merged.http"];
+        assert!(merged.contains("\"secret\": \"{{secret}}\""), "{merged}");
+        assert!(merged.contains("secret={{secret}}\n"), "{merged}");
+        assert!(
+            !merged.contains("plain"),
+            "plaintext default must not override sensitive field:\n{merged}"
+        );
+
+        // Rejected union branch does not leak its secret `z` into `# Secret:`.
+        let undisc = &files["undisc.http"];
+        assert!(undisc.contains("\"a\": 42"), "{undisc}");
+        assert!(
+            !undisc.contains("{{z}}"),
+            "rejected union branch leaked secret:\n{undisc}"
+        );
+    }
+
+    #[test]
+    fn misc_media_types_empty_multipart_form_arrays_and_querystring() {
+        let forge = build_paths(
+            r#"{
+              "/forms": {
+                "post": {
+                  "x-forge-group-name": "forms",
+                  "x-forge-method-name": "submit",
+                  "parameters": [
+                    {"name": "Content-Type", "in": "header", "required": true, "schema": {"type": "string", "default": "application/custom"}},
+                    {"name": "obj", "in": "query", "required": false, "explode": false, "schema": {"type": "object", "properties": {"b": {"type": "string"}, "a": {"type": "boolean"}}}}
+                  ],
+                  "requestBody": {
+                    "content": {
+                      "application/x-www-form-urlencoded": {
+                        "schema": {
+                          "type": "object",
+                          "properties": {
+                            "items": {"type": "array", "minItems": 2, "items": {"type": "integer"}},
+                            "empty": {"type": "array", "maxItems": 0, "items": {"type": "string"}},
+                            "flag": {"type": "boolean", "enum": [true]}
+                          }
+                        }
+                      },
+                      "multipart/form-data": {
+                        "schema": {
+                          "type": "object",
+                          "properties": {
+                            "attachments": {"type": "array", "maxItems": 0, "items": {"type": "string", "format": "binary"}}
+                          }
+                        }
+                      },
+                      "text/plain": {"schema": {}},
+                      "text/*": {"schema": {"type": "string"}},
+                      "*/*": {"schema": {}}
+                    }
+                  },
+                  "responses": {"200": {"description": "ok"}}
+                }
+              }
+            }"#,
+        );
+        let files = generate(&forge);
+        let content = &files["forms/submit.http"];
+        assert!(
+            content.contains("# Optional query: obj=a,false,b,string\n"),
+            "{content}"
+        );
+        assert!(content.contains("flag=true&items=0&items=0\n"), "{content}");
+        assert!(content.contains("<body placeholder>\n"), "{content}");
+        // Wildcard `*/*` and `text/*` keep declared `Content-Type: application/custom`.
+        assert!(content.contains("Content-Type: application/custom\n"), "{content}");
+        // Empty multipart object (maxItems: 0) emits no bogus `name="file"` text dump.
+        assert!(!content.contains("name=\"file\""), "{content}");
     }
 }

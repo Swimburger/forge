@@ -16,7 +16,9 @@ forge generate openapi.json --target http-file --out requests
 
 The generated files use the portable subset of the `.http` format shared by JetBrains HTTP Client,
 Visual Studio, VS Code REST Client, `httpyac` and `kulala`. Each file is self-contained with
-file-level `@var` declarations and requires no generated environment file.
+file-level `@var` declarations and requires no generated environment file. File redirection syntax
+(`< ./file.bin`) is used for binary uploads and works in JetBrains HTTP Client, VS Code REST
+Client, `httpyac` and `kulala`, while Visual Studio requires replacing it with inline content.
 
 For example, an operation `projects.members.create` produces `projects/members/create.http`:
 
@@ -71,7 +73,8 @@ requests/
 ## Method coverage
 
 Every method Forge reads gets a `.http` file. Operations with `x-forge-skip: true` are not methods
-in Forge and produce no file.
+in Forge and produce no file. Each alias in `x-forge-aliases` is its own method and gets its own
+`.http` file at its alias group and method path.
 
 - **Multiple request media types:** When a method declares more than one request body media type,
   the file contains one `###` request block per media type, sorted by media type.
@@ -134,9 +137,12 @@ Each media type block formats its body according to its base media type:
   fields sorted by wire name, with no comments inside the JSON body.
 - **`application/x-www-form-urlencoded`:** Percent-encoded `key=value` pairs joined by `&`.
 - **`multipart/form-data`:** Parts separated by `--<boundary>` and closed with `--<boundary>--`.
-  Binary fields (and arrays of binary fields) emit file parts using `< ./<wire_name>.bin`, object
-  and array fields emit `application/json` parts, and scalar fields emit plain text parts.
-- **Binary (`format: binary` or `application/octet-stream`):** `< ./file.bin`.
+  Binary fields (and arrays of binary fields) emit file parts using `< ./<sanitized_wire_name>.bin`,
+  object and array fields emit `application/json` parts, and scalar fields emit plain text parts.
+- **Binary (`format: binary`, or `application/octet-stream` and wildcards with an unknown schema):**
+  `< ./file.bin`.
+- **Other text media types (`text/plain`, `application/xml` and similar):** Synthesized scalar text,
+  or `<body placeholder>` when the schema is unknown.
 
 Placeholder values are synthesized deterministically from Forge's [type model](/concepts/types/):
 
@@ -144,6 +150,7 @@ Placeholder values are synthesized deterministically from Forge's [type model](/
 | --- | --- |
 | `x-forge-sensitive: true` | `"{{<var>}}"` |
 | `default` (non-sensitive) | Written verbatim (whole finite numbers as integers) |
+| `null` | `null` |
 | `boolean` | `false` |
 | `string` | `"string"` |
 | `uuid` | `"00000000-0000-0000-0000-000000000000"` |

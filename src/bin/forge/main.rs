@@ -256,7 +256,10 @@ mod tests {
         assert_eq!(g.spec.as_path(), Path::new("./a.json"));
 
         let http_file = parse(&["generate", "./a.json", "--target", "http-file", "--out", "requests"]).unwrap();
-        assert!(matches!(http_file.command, Command::Generate(_)));
+        let Command::Generate(g) = http_file.command else {
+            panic!("expected Generate");
+        };
+        assert!(matches!(g.target, super::Target::HttpFile));
 
         // Each subcommand still requires its own arguments.
         assert!(parse(&["normalize"]).is_err());
