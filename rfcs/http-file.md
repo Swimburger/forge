@@ -178,10 +178,10 @@ Query parameters are extracted from `method.request()` via `method.location(fiel
 
 1. **Auth placeholder:** Unless `method.headers()` already declares `Authorization` (case-insensitive), emit `# Authorization: Bearer {{token}}`.
 2. **`Accept`:** Unless `method.headers()` already declares `Accept` (case-insensitive), scan `method.responses()` (`2XX` responses in sorted status order) for the first JSON content with a concrete media type, else the first concrete (non-wildcard) content across all `2XX` responses. Emit `Accept: <media-type>` when found; omit `Accept` when no concrete response media type exists.
-3. **`Content-Type`:** Unless `method.headers()` already declares `Content-Type` (case-insensitive), emit `Content-Type` for blocks with a body:
+3. **`Content-Type`:** For blocks with a concrete body media type, the block emits its own `Content-Type` header (suppressing any declared `Content-Type` header parameter so every media-type block sends its exact type):
    - Concrete media types keep the spec's `media_type` verbatim (preserving parameters such as `; charset=utf-8`).
    - `multipart/form-data` reuses any existing `boundary=` parameter in `media_type`, or appends `; boundary=ForgeBoundary`.
-   - Wildcard media ranges (`*/*` or ending in `/*`) do not emit an active `Content-Type` header; emit `# Content-Type: application/octet-stream` as a hint instead.
+   - Wildcard media ranges (`*/*` or ending in `/*`) keep a declared `Content-Type` header parameter if present, or otherwise emit `# Content-Type: application/octet-stream` as a hint.
 4. **Declared headers (`method.headers()`):** Emitted in Forge's declaration order (skipping `read_only` fields):
    - Required headers: `<Wire-Name>: <value>`
    - Optional headers: `# <Wire-Name>: <value>`
@@ -252,7 +252,7 @@ Real-world specs contain both cyclic models (`Node -> Node`) and wide DAG diamon
 
 1. **Cycle guard:** Track active `Model`s on the current recursion stack (`HashSet<Model>`). Re-entering an active model yields `{}` (or `[]` when directly inside an array, or `null` when inside a nullable union).
 2. **Depth limit (`MAX_DEPTH = 5`):** Beyond depth 5, objects collapse to `{}` and arrays to `[]`.
-3. **Node budget (`MAX_NODES = 250` per request body):** Track total synthesized JSON values per body. Once the budget is exhausted, remaining nested objects collapse to `{}` and arrays to `[]`, keeping every generated `.http` file readable.
+3. **Container budget (`MAX_NODES = 250` per request body):** Track total synthesized JSON objects and arrays per body. Once the budget is exhausted, remaining nested objects collapse to `{}` and arrays to `[]`, keeping every generated `.http` file readable.
 
 ## Determinism and errors
 

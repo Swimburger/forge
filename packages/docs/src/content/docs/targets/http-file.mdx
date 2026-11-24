@@ -118,10 +118,11 @@ Request URLs stay on a single line so every `.http` client parses them cleanly:
   `Authorization` header parameter.
 - **`Accept`:** Inferred from the first concrete JSON media type (or else the first concrete
   non-wildcard media type) across `2XX` responses, unless the operation declares `Accept`.
-- **`Content-Type`:** Matches the block's concrete media type unless declared as a header parameter.
-  `multipart/form-data` preserves an existing `boundary=` parameter or appends
-  `; boundary=ForgeBoundary`. Wildcard ranges such as `*/*` emit `# Content-Type: application/octet-stream`
-  as a comment instead of an active header.
+- **`Content-Type`:** Blocks with a concrete body media type emit their exact `Content-Type` header
+  (overriding a declared `Content-Type` header parameter so multi-media-type endpoints send the
+  right type per block). `multipart/form-data` preserves an existing `boundary=` parameter or
+  appends `; boundary=ForgeBoundary`. Wildcard ranges such as `*/*` keep a declared `Content-Type`
+  parameter if present or emit `# Content-Type: application/octet-stream` as a comment.
 - **Declared headers:** Required headers are active, optional headers are commented with `# `, array
   headers are comma-joined, and sensitive headers use `{{<var>}}`.
 
@@ -157,7 +158,7 @@ Placeholder values are synthesized deterministically from Forge's [type model](/
 | `union` | First discriminator case sorted by key, else the lexicographically first synthesized non-`null` member |
 
 Active model cycles collapse to `{}`, `[]` inside arrays, or `null` inside nullable unions.
-Synthesis stops expanding nested containers past depth `5` or `250` JSON nodes per body.
+Synthesis stops expanding nested containers past depth `5` or `250` objects and arrays per body.
 
 ## Related resources
 

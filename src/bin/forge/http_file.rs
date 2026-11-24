@@ -118,9 +118,26 @@ mod tests {
 
         // Validate preamble (`# ...`, blank lines, and `@var = val`).
         let preamble = sections[0];
-        let mut saw_base_url = false;
+        let mut declared_vars = std::collections::HashSet::new();
+        let mut secret_vars = std::collections::HashSet::new();
         for line in preamble.lines() {
-            if line.is_empty() || line.starts_with('#') {
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("# Secret: supply ") {
+                let list = rest
+                    .strip_suffix(" via your HTTP client's environment.")
+                    .unwrap_or_else(|| panic!("{path}: malformed secret header: {line:?}"));
+                for item in list.split(", ") {
+                    let var = item
+                        .strip_prefix("{{")
+                        .and_then(|s| s.strip_suffix("}}"))
+                        .unwrap_or_else(|| panic!("{path}: malformed secret var {item:?}"));
+                    secret_vars.insert(var.to_owned());
+                }
+                continue;
+            }
+            if line.starts_with('#') {
                 continue;
             }
             assert!(line.starts_with('@'), "{path}: unexpected preamble line: {line:?}");
@@ -131,11 +148,37 @@ mod tests {
                 !lhs.is_empty() && lhs.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
                 "{path}: invalid variable name {lhs:?}"
             );
-            if lhs == "baseUrl" {
-                saw_base_url = true;
-            }
+            assert!(
+                declared_vars.insert(lhs.to_owned()),
+                "{path}: duplicate @{lhs} declaration"
+            );
         }
-        assert!(saw_base_url, "{path}: missing @baseUrl declaration");
+        assert!(
+            declared_vars.contains("baseUrl"),
+            "{path}: missing @baseUrl declaration"
+        );
+        for secret in &secret_vars {
+            assert!(
+                !declared_vars.contains(secret),
+                "{path}: declared @{secret} shadows secret {{{{{secret}}}}}"
+            );
+        }
+
+        // Every `{{var}}` referenced in any request block must be declared or
+        // listed as a secret.
+        let mut rest = content;
+        while let Some(start) = rest.find("{{") {
+            let after = &rest[start + 2..];
+            let Some(end) = after.find("}}") else {
+                break;
+            };
+            let var = &after[..end];
+            assert!(
+                declared_vars.contains(var) || secret_vars.contains(var),
+                "{path}: undeclared variable reference {{{{{var}}}}}"
+            );
+            rest = &after[end + 2..];
+        }
 
         // Validate each `### ` request block.
         let mut seen_names = std::collections::HashSet::new();
@@ -206,6 +249,10 @@ mod tests {
             let body: String = lines.collect::<Vec<_>>().join("\n");
             if let Some(ct) = content_type {
                 let base = ct.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
+                assert!(
+                    base != "*/*" && !base.ends_with("/*"),
+                    "{path} block {idx}: wildcard Content-Type header {ct:?}"
+                );
                 if base == "application/json" || base.ends_with("+json") {
                     serde_json::from_str::<serde_json::Value>(&body)
                         .unwrap_or_else(|err| panic!("{path} block {idx}: invalid JSON body: {err}\n{body}"));
@@ -218,14 +265,34 @@ mod tests {
                             k.trim().eq_ignore_ascii_case("boundary").then(|| v.trim())
                         })
                         .unwrap_or_else(|| panic!("{path} block {idx}: multipart header missing boundary: {ct}"));
+                    let open = format!("--{boundary}");
+                    let close = format!("--{boundary}--");
                     assert!(
-                        body.starts_with(&format!("--{boundary}\n")),
-                        "{path} block {idx}: multipart body does not start with --{boundary}"
+                        body.starts_with(&format!("{open}\n")),
+                        "{path} block {idx}: multipart body does not start with {open}"
                     );
                     assert!(
-                        body.ends_with(&format!("--{boundary}--")),
-                        "{path} block {idx}: multipart body does not end with --{boundary}--"
+                        body.ends_with(&close),
+                        "{path} block {idx}: multipart body does not end with {close}"
                     );
+                    let inner = body
+                        .strip_prefix(&format!("{open}\n"))
+                        .and_then(|s| s.strip_suffix(&close))
+                        .unwrap();
+                    for part in inner.split(&format!("\n{open}\n")) {
+                        let (part_headers, part_body) = part
+                            .split_once("\n\n")
+                            .unwrap_or_else(|| panic!("{path} block {idx}: malformed multipart part:\n{part}"));
+                        assert!(
+                            part_headers.contains("Content-Disposition: form-data;"),
+                            "{path} block {idx}: missing Content-Disposition:\n{part_headers}"
+                        );
+                        if part_headers.contains("Content-Type: application/json") {
+                            serde_json::from_str::<serde_json::Value>(part_body.trim()).unwrap_or_else(|err| {
+                                panic!("{path} block {idx}: invalid JSON multipart part: {err}\n{part_body}")
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -855,5 +922,66 @@ mod tests {
             content.contains("# Warning: Deletes everything.\n# Cannot undo.\n"),
             "{content}"
         );
+    }
+
+    #[test]
+    fn declared_vars_never_shadow_secrets_and_concrete_content_type_wins() {
+        let forge = build_paths(
+            r#"{
+              "/invites/{token}/{key}": {
+                "post": {
+                  "x-forge-group-name": "invites",
+                  "x-forge-method-name": "accept",
+                  "parameters": [
+                    {"name": "token", "in": "path", "required": true, "schema": {"type": "string"}},
+                    {"name": "key", "in": "path", "required": true, "schema": {"type": "string"}},
+                    {"name": "Key", "in": "header", "required": true, "schema": {"type": "string", "x-forge-sensitive": true}},
+                    {"name": "Content-Type", "in": "header", "required": false, "schema": {"type": "string"}}
+                  ],
+                  "requestBody": {
+                    "content": {
+                      "application/json": {
+                        "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}
+                      },
+                      "multipart/form-data": {
+                        "schema": {
+                          "type": "object",
+                          "properties": {
+                            "../bad\"name": {"type": "string", "format": "binary"},
+                            "note": {"type": "string", "default": "line1\r\nline2"}
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "responses": {"200": {"description": "ok"}}
+                }
+              }
+            }"#,
+        );
+        let files = generate(&forge);
+        let content = &files["invites/accept.http"];
+        // Path `{token}` was renamed to `token_2` so it never shadows `{{token}}`.
+        assert!(content.contains("@token_2 = <token>\n"), "{content}");
+        assert!(content.contains("@key = <key>\n"), "{content}");
+        // Sensitive header `Key` avoids colliding with `@key`.
+        assert!(content.contains("Key: {{key_secret}}\n"), "{content}");
+        assert!(
+            content.contains("# Secret: supply {{key_secret}}, {{token}}"),
+            "{content}"
+        );
+        // Concrete Content-Type headers are emitted for both blocks instead of `# Content-Type: string`.
+        assert!(content.contains("Content-Type: application/json\n"), "{content}");
+        assert!(
+            content.contains("Content-Type: multipart/form-data; boundary=ForgeBoundary\n"),
+            "{content}"
+        );
+        assert!(!content.contains("# Content-Type:"), "{content}");
+        // Escaped Content-Disposition name and sanitized filename without traversal.
+        assert!(
+            content.contains("Content-Disposition: form-data; name=\"../bad\\\"name\"; filename=\"bad_name.bin\"\n"),
+            "{content}"
+        );
+        assert!(content.contains("< ./bad_name.bin\n"), "{content}");
     }
 }

@@ -12,19 +12,28 @@ pub(super) const MAX_DEPTH: usize = 5;
 /// Maximum number of JSON values synthesized in a single request body.
 pub(super) const MAX_NODES: usize = 250;
 
-/// Per-body synthesis state: nesting depth, node budget, cycle guard, and
-/// any undeclared secret variable names referenced.
+/// Per-body synthesis state: nesting depth, container budget, cycle guard,
+/// declared non-secret variable names to avoid shadowing, and any undeclared
+/// secret variable names referenced.
 #[derive(Clone, Default)]
 pub(super) struct SynthCtx<'f> {
     depth: usize,
     nodes: usize,
     active_models: HashSet<Model<'f>>,
+    declared_vars: HashSet<String>,
     pub(super) secrets: BTreeSet<String>,
 }
 
 impl<'f> SynthCtx<'f> {
     pub(super) fn new() -> Self {
         Self::default()
+    }
+
+    pub(super) fn with_declared(declared_vars: HashSet<String>) -> Self {
+        Self {
+            declared_vars,
+            ..Self::default()
+        }
     }
 
     fn consume_node(&mut self) -> bool {
@@ -38,6 +47,29 @@ impl<'f> SynthCtx<'f> {
     pub(super) fn record_secret(&mut self, var: &str) {
         self.secrets.insert(var.to_owned());
     }
+
+    /// Allocates a secret variable name that does not collide with any
+    /// declared non-sensitive `@var` in the same file.
+    pub(super) fn secret_var(&mut self, name: &Name, wire_name: &str) -> String {
+        let base = sanitize_var_name(name, wire_name);
+        let var = if !self.declared_vars.contains(&base) {
+            base
+        } else {
+            let mut chosen = format!("{base}_secret");
+            if self.declared_vars.contains(&chosen) {
+                for n in 2u32.. {
+                    let candidate = format!("{base}_secret_{n}");
+                    if !self.declared_vars.contains(&candidate) {
+                        chosen = candidate;
+                        break;
+                    }
+                }
+            }
+            chosen
+        };
+        self.record_secret(&var);
+        var
+    }
 }
 
 /// Allocates unique, `.http`-safe variable names within one file.
@@ -47,6 +79,11 @@ pub(super) struct VarScope {
 }
 
 impl VarScope {
+    /// Reserves `name` so subsequent allocations avoid shadowing it.
+    pub(super) fn reserve(&mut self, name: &str) {
+        self.used.insert(name.to_owned());
+    }
+
     /// Allocates a unique ASCII `snake_case` variable name for `name` (falling
     /// back to `wire_name`), disambiguating collisions with `_2`, `_3`, ...
     pub(super) fn alloc(&mut self, name: &Name, wire_name: &str) -> String {
@@ -62,6 +99,42 @@ impl VarScope {
         }
         unreachable!("u32 exhausted")
     }
+}
+
+/// Sanitizes `wire_name` into a safe single path segment filename stem
+/// (`[a-zA-Z0-9_-]`), preventing `/` or `..` traversal in `< ./<file>.bin`.
+pub(super) fn sanitize_filename_stem(wire_name: &str) -> String {
+    let mut out = String::with_capacity(wire_name.len());
+    for ch in wire_name.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else if !out.is_empty() && !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.is_empty() { "file".to_owned() } else { out }
+}
+
+/// Escapes `s` for use inside a quoted-string parameter in `Content-Disposition`.
+pub(super) fn escape_quoted_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\r' | '\n' => out.push(' '),
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Strips `\r` bytes so generated `.http` files always use LF line endings.
+pub(super) fn normalize_lf(s: &str) -> String {
+    s.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 /// Returns an ASCII `[a-z0-9_]+` variable name, prefixed with `_` if it starts
@@ -221,7 +294,18 @@ fn collect_object_fields<'f>(
         Type::Object(obj) => {
             for field in obj.fields() {
                 if !field.is_read_only() {
-                    fields.entry(field.wire_name()).or_insert(field);
+                    fields
+                        .entry(field.wire_name())
+                        .and_modify(|existing| {
+                            // Prefer a field with a default (or sensitive flag) deterministically
+                            // when an intersection's unordered members declare the same wire name.
+                            if (existing.default().is_none() && field.default().is_some())
+                                || (!existing.is_sensitive() && field.is_sensitive())
+                            {
+                                *existing = field;
+                            }
+                        })
+                        .or_insert(field);
                 }
             }
             if extra.is_none() {
@@ -257,8 +341,7 @@ fn collect_object_fields<'f>(
 pub(super) fn synth_json<'f>(ty: Type<'f>, field: Option<Field<'f>>, ctx: &mut SynthCtx<'f>) -> Value {
     if let Some(f) = field {
         if f.is_sensitive() {
-            let var = sanitize_var_name(f.name(), f.wire_name());
-            ctx.record_secret(&var);
+            let var = ctx.secret_var(f.name(), f.wire_name());
             return Value::String(format!("{{{{{var}}}}}"));
         }
         if let Some(default) = f.default() {
@@ -275,7 +358,7 @@ pub(super) fn synth_json<'f>(ty: Type<'f>, field: Option<Field<'f>>, ctx: &mut S
             None => Value::Null,
         },
         Type::Array(arr) => {
-            if !ctx.consume_node() || ctx.depth >= MAX_DEPTH {
+            if ctx.depth >= MAX_DEPTH || !ctx.consume_node() {
                 return Value::Array(Vec::new());
             }
             let count = array_count(arr);
@@ -305,7 +388,7 @@ pub(super) fn synth_json<'f>(ty: Type<'f>, field: Option<Field<'f>>, ctx: &mut S
 }
 
 fn synth_object_json<'f>(obj: Object<'f>, ctx: &mut SynthCtx<'f>) -> Value {
-    if !ctx.consume_node() || ctx.depth >= MAX_DEPTH {
+    if ctx.depth >= MAX_DEPTH || !ctx.consume_node() {
         return Value::Object(Map::new());
     }
     ctx.depth += 1;
@@ -330,12 +413,23 @@ fn synth_intersection_json<'f>(members: impl Iterator<Item = Type<'f>>, ctx: &mu
     if ctx.depth >= MAX_DEPTH || ctx.nodes >= MAX_NODES {
         return Value::Object(Map::new());
     }
+    let mut synthesized: Vec<(String, Value)> = members
+        .map(|member| {
+            let val = synth_json(member, None, ctx);
+            let key = serde_json::to_string(&val).unwrap_or_default();
+            (key, val)
+        })
+        .collect();
+    // Forge leaves intersection member order unspecified; sort synthesized
+    // members canonically so overlapping keys merge deterministically.
+    synthesized.sort_by(|a, b| a.0.cmp(&b.0));
+
     let mut merged: BTreeMap<String, Value> = BTreeMap::new();
-    let mut non_objects: Vec<(String, Value)> = Vec::new();
+    let mut non_objects: Vec<Value> = Vec::new();
     let mut saw_object = false;
 
-    for member in members {
-        match synth_json(member, None, ctx) {
+    for (_, val) in synthesized {
+        match val {
             Value::Object(map) => {
                 saw_object = true;
                 for (k, v) in map {
@@ -343,10 +437,7 @@ fn synth_intersection_json<'f>(members: impl Iterator<Item = Type<'f>>, ctx: &mu
                 }
             }
             Value::Null => {}
-            other => {
-                let key = serde_json::to_string(&other).unwrap_or_default();
-                non_objects.push((key, other));
-            }
+            other => non_objects.push(other),
         }
     }
 
@@ -354,8 +445,7 @@ fn synth_intersection_json<'f>(members: impl Iterator<Item = Type<'f>>, ctx: &mu
         let map: Map<String, Value> = merged.into_iter().collect();
         return Value::Object(map);
     }
-    non_objects.sort_by(|a, b| a.0.cmp(&b.0));
-    non_objects.into_iter().next().map_or(Value::Null, |(_, v)| v)
+    non_objects.into_iter().next().unwrap_or(Value::Null)
 }
 
 fn synth_union_json<'f>(u: forge::Union<'f>, ctx: &mut SynthCtx<'f>) -> Value {
@@ -465,12 +555,11 @@ pub(super) fn synth_scalar<'f>(
 ) -> ScalarVal {
     if let Some(f) = field {
         if f.is_sensitive() {
-            let var = sanitize_var_name(f.name(), f.wire_name());
-            ctx.record_secret(&var);
+            let var = ctx.secret_var(f.name(), f.wire_name());
             return ScalarVal::TemplateVar(var);
         }
         if let Some(default) = f.default() {
-            return ScalarVal::Literal(format_json_scalar(default));
+            return ScalarVal::Literal(normalize_lf(&format_json_scalar(default)));
         }
     }
 
