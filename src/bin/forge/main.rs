@@ -4,6 +4,7 @@
 //! forge generate openapi.json --target ts --out sdk
 //! forge generate openapi.json --target capnweb --out server
 //! forge generate openapi.json --target mcp --out tools
+//! forge generate openapi.json --target http-file --out requests
 //! forge generate openapi.json --target wasm://plugin.wasm --out sdk
 //! forge normalize specs/*.json
 //! forge inspect methods openapi.json
@@ -19,6 +20,7 @@ use forge::{Err, Forge, Plugin};
 use strum::{EnumString, VariantNames};
 
 mod capnweb;
+mod http_file;
 mod inspect;
 mod mcp;
 mod normalize;
@@ -53,20 +55,21 @@ enum Command {
 struct GenerateArgs {
     /// The OpenAPI JSON document, or - to read it from standard input.
     spec: PathBuf,
-    /// The language of the SDK: `ts` for TypeScript, `capnweb` for a Cap'n
+    /// The target to generate: `ts` for TypeScript, `capnweb` for a Cap'n
     /// Web server of the TypeScript SDK, which it imports from `#sdk`, `mcp`
-    /// for the tools of an MCP server in TypeScript, or `wasm://PATH` for the
-    /// plugin compiled to a WebAssembly component at PATH.
+    /// for the tools of an MCP server in TypeScript, `http-file` for `.http`
+    /// request files, or `wasm://PATH` for the plugin compiled to a
+    /// WebAssembly component at PATH.
     #[arg(long, value_parser = Target::parse)]
     target: Target,
-    /// The directory to write the SDK to.
+    /// The directory to write the output to.
     #[arg(long)]
     out: PathBuf,
 }
 
 /// What forge generates an SDK with.
 #[derive(Clone, EnumString, VariantNames)]
-#[strum(serialize_all = "lowercase")]
+#[strum(serialize_all = "kebab-case")]
 enum Target {
     /// The TypeScript generator.
     Ts,
@@ -74,6 +77,8 @@ enum Target {
     Capnweb,
     /// The MCP generator, which generates the tools of an MCP server in TypeScript.
     Mcp,
+    /// The HTTP file generator, which generates `.http` request files.
+    HttpFile,
     /// A plugin compiled to a WebAssembly component, at the path.
     #[cfg(feature = "wasm")]
     #[strum(disabled)]
@@ -166,6 +171,7 @@ fn generate(spec: &Path, target: Target, out: &Path) -> Result<(), Err> {
         Target::Ts => run_plugin(&ts::Generator, spec, out),
         Target::Capnweb => run_plugin(&capnweb::Generator, spec, out),
         Target::Mcp => run_plugin(&mcp::Generator, spec, out),
+        Target::HttpFile => run_plugin(&http_file::Generator, spec, out),
         #[cfg(feature = "wasm")]
         Target::Wasm(path) => {
             // Compiling the plugin and reading the document are both slow,
@@ -248,6 +254,9 @@ mod tests {
             panic!("expected Generate");
         };
         assert_eq!(g.spec.as_path(), Path::new("./a.json"));
+
+        let http_file = parse(&["generate", "./a.json", "--target", "http-file", "--out", "requests"]).unwrap();
+        assert!(matches!(http_file.command, Command::Generate(_)));
 
         // Each subcommand still requires its own arguments.
         assert!(parse(&["normalize"]).is_err());

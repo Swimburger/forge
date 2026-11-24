@@ -116,6 +116,19 @@ fn capnweb() {
     std::fs::remove_dir_all(&out).unwrap();
 }
 
+#[test]
+fn http_file() {
+    let out = std::env::temp_dir().join(format!("forge-cli-http-file-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    let result = generate(&["-", "--target", "http-file", "--out", out.to_str().unwrap()], SPEC);
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let path = out.join("a/get.http");
+    assert!(path.is_file(), "a/get.http is missing");
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("# @name a_get\nGET {{baseUrl}}/a\n"), "{content}");
+    std::fs::remove_dir_all(&out).unwrap();
+}
+
 /// `forge` with no arguments prints the top-level help on stdout and exits
 /// successfully, so it reads cleanly in a pager or pipeline. Every other
 /// invalid invocation keeps the usual stderr-and-exit-2 shape.

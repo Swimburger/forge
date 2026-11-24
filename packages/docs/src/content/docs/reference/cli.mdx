@@ -26,7 +26,7 @@ forge generate --target <TARGET> --out <OUT> <SPEC>
 | Argument            | Meaning                                                                    |
 | ------------------- | -------------------------------------------------------------------------- |
 | `<SPEC>`            | The OpenAPI JSON document, or `-` to read it from standard input.          |
-| `--target <TARGET>` | `ts` for the [TypeScript SDK](/targets/typescript/), `capnweb` for a Cap'n Web server of that SDK, which it imports from `#sdk`, `mcp` for the [tools of an MCP server](/targets/mcp/), or `wasm://PATH` for the [plugin](/plugins/overview/) compiled to a WebAssembly component at `PATH`. |
+| `--target <TARGET>` | `ts` for the [TypeScript SDK](/targets/typescript/), `capnweb` for a Cap'n Web server of that SDK, which it imports from `#sdk`, `mcp` for the [tools of an MCP server](/targets/mcp/), `http-file` for [`.http` request files](/targets/http-file/), or `wasm://PATH` for the [plugin](/plugins/overview/) compiled to a WebAssembly component at `PATH`. |
 | `--out <OUT>`       | The directory to write to. Created if it does not exist.                   |
 | `--help`            | Prints help.                                                               |
 
