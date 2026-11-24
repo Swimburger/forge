@@ -33,7 +33,10 @@ For example, an operation `projects.members.create` produces `projects/members/c
 # POST /projects/{project_id}/members
 # Adds a user to the project with the given role.
 # Availability: beta
+# Responses: 201
 # Optional query: dry_run=false
+# Required body fields: email, role
+# Enum role: admin | member
 # @name projects_members_create
 POST {{baseUrl}}/projects/{{project_id}}/members?notify=true
 # Authorization: Bearer {{token}}
@@ -54,6 +57,7 @@ inside its group's directory:
 
 ```text
 requests/
+  README.md
   health.http
   projects/
     list.http
@@ -64,6 +68,9 @@ requests/
       create.http
 ```
 
+- When the document has at least one method, a root `README.md` is generated with the API version
+  and base URL, copy-paste environment setup snippets for every secret variable used across the
+  generated files, and a sorted table linking every `.http` file.
 - A method of the root group is written at `<method-kebab>.http`.
 - A group with no methods and no descendant methods creates no directory.
 - A method and a subgroup with the same name (`projects/archive.http` and
@@ -78,11 +85,19 @@ in Forge and produce no file. Each alias in `x-forge-aliases` is its own method 
 
 - **Multiple request media types:** When a method declares more than one request body media type,
   the file contains one `###` request block per media type, sorted by media type.
+- **Discriminated JSON unions:** When a JSON body's top-level schema (or a member of a top-level
+  `allOf` intersection) is a discriminated union with two or more cases, each case gets its own
+  `###` request block (up to 20 cases sorted by case string).
+- **Large JSON objects:** When a JSON object body has at least one required field and more than 10
+  optional fields, the file emits a `(minimal)` block with only required fields followed by a
+  `(full)` block with all non-`readOnly` fields.
 - **No body or empty content:** A method with no request body, or an empty `content` map, produces a
   single bodyless request block.
-- **Lifecycle and safety metadata:** Deprecated methods get `# @deprecated`, hidden methods get
-  `# Hidden`, `x-forge-availability` emits `# Availability: <stage>`, and
-  `x-forge-require-confirmation` emits `# Warning: <message>`.
+- **Lifecycle, safety and schema metadata:** Deprecated methods get `# @deprecated`, hidden methods
+  get `# Hidden`, `x-forge-availability` emits `# Availability: <stage>`,
+  `x-forge-require-confirmation` emits `# Warning: <message>`, declared status codes emit
+  `# Responses: ...`, object bodies list `# Required body fields: ...`, and top-level enum fields
+  and optional enum query parameters include their allowed choices.
 
 ## Names
 
@@ -90,10 +105,10 @@ Each request block has a `# @name <id>` directive immediately above the request 
 the group path and method name in `camelCase` with `_`, such as `projects_members_create` or
 `health` for a root method.
 
-When a file has multiple request blocks for different media types, each `# @name` appends a
-`camelCase` suffix from the media type subtype (for example `assets_upload_json` and
-`assets_upload_multipartFormData`). Collisions within a file are disambiguated with `_2`, `_3` and
-so on.
+When a file has multiple request blocks (for different media types, discriminated union cases, or
+minimal and full body variants), each `# @name` appends the corresponding `camelCase` suffixes (for
+example `assets_upload_json`, `graph_createEnvelope_cat`, or `zones_dns_create_minimal`). Collisions
+within a file are disambiguated with `_2`, `_3` and so on.
 
 ## Variables and secrets
 

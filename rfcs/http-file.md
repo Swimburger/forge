@@ -22,6 +22,7 @@ The generated files use the portable subset of the `.http` format shared by JetB
 
 ```text
 requests/
+  README.md                       API overview, secret setup snippets, and endpoint index
   health.http                     root group method `health`
   projects/
     list.http                     group `projects`, method `list`
@@ -35,6 +36,7 @@ requests/
 
 Every group becomes a directory along its path in `kebab-case`, and every method becomes `<method-kebab>.http` inside its group's directory:
 
+- When the document has at least one method, a root `README.md` is written with the API version and base URL, copy-paste secret setup snippets for every undeclared secret variable across all endpoints, and a sorted table linking every `.http` file.
 - A method of the root group is written at `<method-kebab>.http`.
 - A method of group `projects.members` is written at `projects/members/<method-kebab>.http`.
 - A group with no direct methods and no descendant methods creates no directory.
@@ -54,6 +56,8 @@ Every `.http` file begins with a generated-file comment header:
 Every `Method` Forge reads gets a `.http` file. Operations with `x-forge-skip: true` are not methods in Forge and produce no file. Aliases declared with `x-forge-aliases` are distinct `Method`s in Forge and each gets its own file at its alias group and method path.
 
 - **Multiple request media types:** When `method.body()` has multiple `contents`, the endpoint's `.http` file contains one `###` request block per media type, in Forge's sorted media-type order.
+- **Discriminated JSON unions:** When a JSON body's top-level schema (or a member of a top-level `allOf` intersection) is a discriminated union with two or more cases, each case gets its own `###` request block (up to 20 cases sorted by case string; additional cases are noted in a comment on the last block).
+- **Large JSON objects (minimal and full blocks):** When a JSON object body has at least one required field and more than 10 optional fields, the file emits a `(minimal)` block with only required fields followed by a `(full)` block with all non-`readOnly` fields.
 - **No body or empty `contents`:** When `method.body()` is `None`, or `body.contents()` is empty, the file contains a single bodyless request block.
 - **Deprecated methods (`method.is_deprecated()`):** Kept, annotated with `# @deprecated` in the request comment header.
 - **Hidden methods (`method.is_hidden()`):** Kept, annotated with `# Hidden` in the request comment header.
@@ -125,7 +129,10 @@ Forge does not model OpenAPI `securitySchemes` or operation `security`, and this
 # POST /projects/{project_id}/members
 # Adds a user to the project with the given role.
 # Availability: beta
+# Responses: 201
 # Optional query: dry_run=false
+# Required body fields: email, role
+# Enum role: admin | member
 # @name projects_members_create
 POST {{baseUrl}}/projects/{{project_id}}/members?notify=true
 # Authorization: Bearer {{token}}
@@ -141,7 +148,7 @@ Content-Type: application/json
 
 Each request block has the following sections in order, with no blank lines between `# @name`, the request line, and the headers:
 
-1. **Heading:** `### <summary>`, where `summary` has `\r`, `\n`, and runs of whitespace collapsed to single spaces. Falls back to `### <METHOD> <path>` when `method.summary()` is empty. When the file contains multiple media-type blocks, appends ` (<media-type>)`.
+1. **Heading:** `### <summary>`, where `summary` has `\r`, `\n`, and runs of whitespace collapsed to single spaces. Falls back to `### <METHOD> <path>` when `method.summary()` is empty. Appends qualifiers in parentheses when the file contains multiple media-type blocks, discriminated union variants, or `(minimal)` / `(full)` splits.
 2. **Metadata comments:**
    - `# <METHOD> <path>`
    - `# <description>` with `\r\n` and bare `\r` normalized to `\n` and every line prefixed with `# ` (lines whose trimmed content starts with `@` use `## ` to avoid directive injection; blank lines become `#`; omitted if empty or identical to `summary`)
@@ -149,7 +156,10 @@ Each request block has the following sections in order, with no blank lines betw
    - `# @deprecated` (when `method.is_deprecated()`)
    - `# Hidden` (when `method.is_hidden()`)
    - `# Warning: <confirmation>` (when `method.confirmation()` is `Some`, with subsequent lines `# `-prefixed and `@`-leading lines neutralized with `## `)
-   - `# Optional query: ...` (when the method has optional query parameters)
+   - `# Responses: <status>, ...` (declared `2XX` and error status codes when present)
+   - `# Optional query: ...` (when the method has optional query parameters, appending `(a | b | c)` for enum parameters with more than one value)
+   - `# Required body fields: ...` (for object request bodies with required non-`readOnly` fields)
+   - `# Enum <field>: val1 | val2 | ...` (up to 6 top-level body enum hints per block, capped at 8 values each)
    - `# @name <id>` (always the line immediately before the request line)
 3. **Request line (single line):** `<METHOD> {{baseUrl}}<path>[?<required-query>]`
 4. **Headers:** Active headers and `# `-commented optional/placeholder headers.

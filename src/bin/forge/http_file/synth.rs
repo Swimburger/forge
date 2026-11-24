@@ -13,15 +13,19 @@ pub(super) const MAX_DEPTH: usize = 5;
 /// single request body.
 pub(super) const MAX_NODES: usize = 250;
 
+/// Maximum number of discriminator cases expanded into separate request blocks.
+pub(super) const MAX_UNION_VARIANTS: usize = 20;
+
 /// Per-body synthesis state: nesting depth, container budget, cycle guard,
-/// reserved variable names to avoid shadowing, and any undeclared secret
-/// variable names referenced.
+/// reserved variable names to avoid shadowing, minimal-body flag, and any
+/// undeclared secret variable names referenced.
 #[derive(Clone, Default)]
 pub(super) struct SynthCtx<'f> {
     depth: usize,
     nodes: usize,
     active_models: HashSet<Model<'f>>,
     reserved_vars: HashSet<String>,
+    pub(super) required_only: bool,
     pub(super) secrets: BTreeSet<String>,
 }
 
@@ -428,8 +432,14 @@ fn synth_object_json<'f>(obj: Object<'f>, ctx: &mut SynthCtx<'f>) -> Value {
         return Value::Object(Map::new());
     }
     ctx.depth += 1;
-    let mut fields: Vec<Field<'f>> = obj.fields().filter(|f| !f.is_read_only()).collect();
-    fields.sort_by_key(|f| f.wire_name());
+    let mut all_fields: Vec<Field<'f>> = obj.fields().filter(|f| !f.is_read_only()).collect();
+    all_fields.sort_by_key(|f| f.wire_name());
+    let had_fields = !all_fields.is_empty();
+    let fields: Vec<Field<'f>> = if ctx.required_only {
+        all_fields.into_iter().filter(|f| f.is_required()).collect()
+    } else {
+        all_fields
+    };
 
     let mut map = Map::new();
     if !fields.is_empty() {
@@ -437,7 +447,10 @@ fn synth_object_json<'f>(obj: Object<'f>, ctx: &mut SynthCtx<'f>) -> Value {
             let val = synth_json(field.ty(), Some(field), ctx);
             map.insert(field.wire_name().to_owned(), val);
         }
-    } else if let Some(extra) = obj.extra() {
+    } else if !had_fields
+        && !ctx.required_only
+        && let Some(extra) = obj.extra()
+    {
         let val = synth_json(extra, None, ctx);
         map.insert("key".to_owned(), val);
     }
@@ -461,6 +474,7 @@ fn synth_intersection_json<'f>(members: impl Iterator<Item = Type<'f>>, ctx: &mu
                 nodes: start_nodes,
                 active_models: ctx.active_models.clone(),
                 reserved_vars: ctx.reserved_vars.clone(),
+                required_only: ctx.required_only,
                 secrets: BTreeSet::new(),
             };
             let val = synth_json(member, None, &mut probe);
@@ -799,6 +813,156 @@ pub(super) fn format_json_scalar(json: &Json) -> String {
             serde_json::to_string(&forge_json_to_value(json)).unwrap_or_else(|_| "value".to_owned())
         }
     }
+}
+
+/// A top-level JSON body that expands into one request block per discriminator
+/// case (either a direct discriminated union or an intersection containing one).
+pub(super) struct DiscriminatedBody<'f> {
+    pub(super) wire_name: &'f str,
+    pub(super) base_members: Vec<Type<'f>>,
+    pub(super) cases: Vec<(&'f str, Type<'f>)>,
+    pub(super) omitted: usize,
+}
+
+/// Inspects `ty` for a top-level discriminated union with at least two cases.
+pub(super) fn discriminated_variants<'f>(ty: Type<'f>) -> Option<DiscriminatedBody<'f>> {
+    match unwrap_type(ty) {
+        Type::Union(u) => {
+            let disc = u.discriminator()?;
+            build_discriminated(disc, Vec::new())
+        }
+        Type::Intersection(inter) => {
+            let members: Vec<Type<'f>> = inter.members().collect();
+            // Pick the lexicographically first discriminated union member (by
+            // discriminator wire_name) for determinism.
+            let best_idx = members
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, &m)| {
+                    let Type::Union(u) = unwrap_type(m) else {
+                        return None;
+                    };
+                    let disc = u.discriminator()?;
+                    (disc.cases().len() >= 2).then_some((disc.wire_name(), idx))
+                })
+                .min_by_key(|&(wire, _)| wire)
+                .map(|(_, idx)| idx)?;
+            let Type::Union(u) = unwrap_type(members[best_idx]) else {
+                return None;
+            };
+            let disc = u.discriminator()?;
+            let base_members: Vec<Type<'f>> = members
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, m)| (i != best_idx).then_some(m))
+                .collect();
+            build_discriminated(disc, base_members)
+        }
+        _ => None,
+    }
+}
+
+fn build_discriminated<'f>(
+    disc: forge::Discriminator<'f>,
+    base_members: Vec<Type<'f>>,
+) -> Option<DiscriminatedBody<'f>> {
+    let mut cases: Vec<(&'f str, Type<'f>)> = disc.cases().collect();
+    if cases.len() < 2 {
+        return None;
+    }
+    cases.sort_by_key(|&(key, _)| key);
+    let total = cases.len();
+    let omitted = total.saturating_sub(MAX_UNION_VARIANTS);
+    cases.truncate(MAX_UNION_VARIANTS);
+    Some(DiscriminatedBody {
+        wire_name: disc.wire_name(),
+        base_members,
+        cases,
+        omitted,
+    })
+}
+
+/// Synthesizes JSON for a specific discriminator variant, merging any base
+/// intersection members and injecting `wire_name = case_key`.
+pub(super) fn synth_variant_json<'f>(
+    base_members: &[Type<'f>],
+    wire_name: &str,
+    case_key: &str,
+    case_ty: Type<'f>,
+    ctx: &mut SynthCtx<'f>,
+) -> Value {
+    let mut val = if base_members.is_empty() {
+        synth_json(case_ty, None, ctx)
+    } else {
+        synth_intersection_json(base_members.iter().copied().chain(std::iter::once(case_ty)), ctx)
+    };
+    if let Value::Object(map) = &mut val {
+        let mut sorted: BTreeMap<String, Value> = std::mem::take(map).into_iter().collect();
+        sorted.insert(wire_name.to_owned(), Value::String(neutralize_templates(case_key)));
+        *map = sorted.into_iter().collect();
+    }
+    val
+}
+
+/// Collects effective non-`read_only` fields for a discriminator variant merged
+/// with its base intersection members.
+pub(super) fn variant_object_fields<'f>(base_members: &[Type<'f>], case_ty: Type<'f>) -> Option<Vec<Field<'f>>> {
+    let mut seen = HashSet::new();
+    let mut candidates: BTreeMap<&'f str, Vec<Field<'f>>> = BTreeMap::new();
+    let mut extras: Vec<Type<'f>> = Vec::new();
+    let mut any = false;
+    for &m in base_members {
+        if collect_object_fields(m, &mut seen, &mut candidates, &mut extras) {
+            any = true;
+        }
+    }
+    if collect_object_fields(case_ty, &mut seen, &mut candidates, &mut extras) {
+        any = true;
+    }
+    if !any {
+        return None;
+    }
+    let fields = candidates
+        .into_values()
+        .map(|mut list| {
+            if list.len() == 1 {
+                return list.pop().expect("len is 1");
+            }
+            list.into_iter()
+                .min_by_key(|&f| {
+                    let mut probe = SynthCtx::new();
+                    let json = serde_json::to_string(&synth_json(f.ty(), Some(f), &mut probe)).unwrap_or_default();
+                    (!f.is_sensitive(), f.default().is_none(), json)
+                })
+                .expect("non-empty")
+        })
+        .collect();
+    Some(fields)
+}
+
+/// Returns formatted enum choices if `ty` (or its array element type, after
+/// unwrapping `Model` and nullable `Union`) is an `Enum` with more than one
+/// value.
+pub(super) fn enum_choices(ty: Type<'_>) -> Option<Vec<String>> {
+    let inner = match unwrap_type(ty) {
+        Type::Array(arr) => unwrap_type(arr.elem()),
+        other => other,
+    };
+    let Type::Enum(e) = inner else {
+        return None;
+    };
+    if e.values().len() <= 1 {
+        return None;
+    }
+    let values = e
+        .values()
+        .map(|v| match v {
+            EnumValue::String(s) => neutralize_templates(&normalize_lf(s)),
+            EnumValue::Number(n) => json_number(n).to_string(),
+            EnumValue::Boolean(b) => b.to_string(),
+        })
+        .collect();
+    Some(values)
 }
 
 /// Converts an `f64` into a `serde_json::Number`, emitting whole finite

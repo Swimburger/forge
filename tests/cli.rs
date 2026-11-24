@@ -124,6 +124,7 @@ fn http_file() {
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let path = out.join("a/get.http");
     assert!(path.is_file(), "a/get.http is missing");
+    assert!(out.join("README.md").is_file(), "README.md is missing");
     let content = std::fs::read_to_string(&path).unwrap();
     assert!(content.contains("# @name a_get\nGET {{baseUrl}}/a\n"), "{content}");
     std::fs::remove_dir_all(&out).unwrap();
