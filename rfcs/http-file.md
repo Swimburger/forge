@@ -269,6 +269,7 @@ Real-world specs contain both cyclic models (`Node -> Node`) and wide DAG diamon
 
 - Every collection whose order Forge leaves unspecified (`Object::fields`, `Discriminator::cases`, `Union::members`, `Intersection::members`) is deterministically ordered before emission.
 - No timestamps, random values, or generator version numbers appear in generated files.
+- Every generated `.http` file and `README.md` is self-validated inside `Generator::generate` before `forge::write` touches disk (checking `.http` syntax, directive safety, zero variable shadowing, no unused variables or phantom secrets, expanded URL and RFC 3986 percent-encoding validity, RFC 9110 header tokens and singleton headers, JSON body parseability, multipart framing and safe filenames, and valid JSON code blocks in `README.md`).
 - `forge::write` validates relative paths and rejects duplicate output paths.
 - Windows reserved device names (`con`, `prn`, `aux`, `nul`, `com1`–`com9`, `lpt1`–`lpt9`) are a known filesystem constraint shared with the other built-in targets.
 

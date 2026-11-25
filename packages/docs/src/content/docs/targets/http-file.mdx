@@ -182,6 +182,14 @@ Placeholder values are synthesized deterministically from Forge's [type model](/
 Active model cycles collapse to `{}`, `[]` inside arrays, or `null` inside nullable unions.
 Synthesis stops expanding nested containers past depth `5` or `250` objects and arrays per body.
 
+## Self-validation
+
+Before writing files to disk, the generator validates every generated `.http` file and `README.md`:
+it checks `.http` block structure, directive neutralization, variable and secret completeness (no
+shadowing, no dangling references, no unused declarations), expanded URL and percent-encoding
+syntax, header validity, JSON parseability, multipart boundary framing, and the JSON setup blocks
+in `README.md`.
+
 ## Related resources
 
 - [Targets](/targets/overview/): every built-in target and when to choose each.
