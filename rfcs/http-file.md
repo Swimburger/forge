@@ -151,11 +151,11 @@ Each request block has the following sections in order, with no blank lines betw
 1. **Heading:** `### <summary>`, where `summary` has `\r`, `\n`, and runs of whitespace collapsed to single spaces. Falls back to `### <METHOD> <path>` when `method.summary()` is empty. Appends qualifiers in parentheses when the file contains multiple media-type blocks, discriminated union variants, or `(minimal)` / `(full)` splits.
 2. **Metadata comments:**
    - `# <METHOD> <path>`
-   - `# <description>` with `\r\n` and bare `\r` normalized to `\n` and every line prefixed with `# ` (lines whose trimmed content starts with `@` use `## ` to avoid directive injection; blank lines become `#`; omitted if empty or identical to `summary`)
+   - `# <description>` with `\r\n` and bare `\r` normalized to `\n` and every line prefixed with `# ` (lines whose trimmed content starts with `@` use `# > ` so clients matching `^#+\s*@` do not execute them as directives; blank lines become `#`; omitted if empty or identical to `summary`)
    - `# Availability: <stage>` (when present)
    - `# @deprecated` (when `method.is_deprecated()`)
    - `# Hidden` (when `method.is_hidden()`)
-   - `# Warning: <confirmation>` (when `method.confirmation()` is `Some`, with subsequent lines `# `-prefixed and `@`-leading lines neutralized with `## `)
+   - `# Warning: <confirmation>` (when `method.confirmation()` is `Some`, with subsequent lines `# `-prefixed and `@`-leading lines neutralized with `# > `)
    - `# Responses: <status>, ...` (declared `2XX` and error status codes when present)
    - `# Optional query: ...` (when the method has optional query parameters, appending `(a | b | c)` for enum parameters with more than one value)
    - `# Required body fields: ...` (for object request bodies with required non-`readOnly` fields)
@@ -334,7 +334,10 @@ Create `src/bin/forge/http_file.rs` and two submodules:
      - Synthesis edge cases: all 10 scalars, enums, `min_items`/`max_items` (`0`, `1`, `2`, `10`), `Intersection` containing a `Union`, discriminated `Union`, unordered `Union` determinism, direct and mutual recursion, wide DAG node-budget truncation.
      - Metadata: multiline `summary` collapsed, multiline `description` prefixed per line, `deprecated`, `hidden`, `availability`, `confirmation` (non-empty and empty string).
 2. **CLI integration test in `tests/cli.rs`:**
-   - Run `forge generate - --target http-file --out <tmp>` and verify `a/get.http` is written with valid content.
+   - Run `forge generate - --target http-file --out <tmp>` and verify `a/get.http` and `README.md` are written with valid content.
+3. **Real-client end-to-end validation in `src/bin/forge/http_file/e2e/` (`just verify-http-file`):**
+   - Runs `forge generate --target http-file` against a live local HTTP capture server and executes every generated `.http` file through `httpyac` (with both `http-client.private.env.json` extracted verbatim from `README.md` and `.env`, plus `--name` filtering), asserting exact wire-level methods, URLs, query params, headers, JSON bodies, form-urlencoded bodies, multipart file uploads, and neutralized directives/delimiters.
+   - Automatically runs the same suite through JetBrains `ijhttp` and `kulala-cli` when installed on `PATH` (or fails when `VERIFY_IJHTTP=1` / `VERIFY_KULALA=1` is set).
 
 ### Phase 4: Documentation and verification
 

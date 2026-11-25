@@ -210,7 +210,7 @@ pub(super) fn validate_http_file(path: &str, content: &str) -> Result<ValidatedH
         // Remaining lines are the body.
         let body_lines: Vec<&str> = lines.collect();
         for body_line in &body_lines {
-            if body_line.starts_with("###") {
+            if body_line.trim_start().starts_with("###") {
                 return Err(format!(
                     "{path} block {idx}: body line starts with `###` request delimiter: {body_line:?}"
                 ));
@@ -336,13 +336,14 @@ pub(super) fn validate_readme(
 }
 
 fn check_comment_directive(path: &str, line: &str, allow_block_directives: bool) -> Result<(), String> {
-    // Neutralized lines use `## ...` and are never directives.
-    if line.starts_with("##") {
-        return Ok(());
-    }
-    let after_hash = line.strip_prefix('#').unwrap_or(line).trim_start();
-    if after_hash.starts_with('@') {
-        if allow_block_directives && (after_hash == "@deprecated" || after_hash.starts_with("@name ")) {
+    // Clients such as `httpyac` and JetBrains match `^#+\s*@(\w+)` across one
+    // or more `#` characters, so strip all leading `#` before checking.
+    let after_hashes = line.trim_start_matches('#').trim_start();
+    if after_hashes.starts_with('@') {
+        if allow_block_directives
+            && line.starts_with("# ")
+            && (after_hashes == "@deprecated" || after_hashes.starts_with("@name "))
+        {
             return Ok(());
         }
         return Err(format!("{path}: unexpected comment directive {line:?}"));

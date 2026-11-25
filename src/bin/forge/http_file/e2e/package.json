@@ -1,0 +1,16 @@
+{
+  "name": "@internal/http-file-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end validation of generated .http files against real HTTP file clients (httpyac, and optionally ijhttp / kulala-cli).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "devDependencies": {
+    "httpyac": "6.16.7"
+  },
+  "engines": {
+    "node": ">=26"
+  }
+}

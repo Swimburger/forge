@@ -2,8 +2,10 @@ packages:
   - packages/*
   - src/bin/forge/ts/lib
   - src/bin/forge/mcp/lib
+  - src/bin/forge/http_file/e2e
 allowBuilds:
   esbuild: true
+  protobufjs: false
   workerd: true
 # Force a patched version of fast-uri in the whole workspace. @redocly/ajv
 # and ajv-formats both depend on fast-uri ^3.0.1, which resolves to a

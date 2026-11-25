@@ -1350,13 +1350,15 @@ fn sanitize_http_method(method: &str) -> String {
     if cleaned.is_empty() { "GET".to_owned() } else { cleaned }
 }
 
-/// Neutralizes lines beginning with `###` inside raw/multipart text bodies so
-/// an untrusted default cannot split the `.http` file into a new request block.
+/// Neutralizes lines whose trimmed text starts with `###` inside raw/multipart
+/// text bodies so an untrusted default cannot split the `.http` file into a
+/// new request block (clients such as `httpyac` match `^\s*###` and strip
+/// lines starting with `#`).
 fn neutralize_request_delimiters(text: &str) -> String {
     text.split('\n')
         .map(|line| {
-            if line.starts_with("###") {
-                format!(" {line}")
+            if line.trim_start().starts_with("###") {
+                line.replacen("###", "\\###", 1)
             } else {
                 line.to_owned()
             }
@@ -1371,13 +1373,14 @@ fn write_comment_block(out: &mut String, text: &str) {
     }
 }
 
-/// Writes a single comment line, neutralizing `# @...` directive syntax
-/// (recognized by JetBrains, `httpyac`, and `kulala`) with `## `.
+/// Writes a single comment line, neutralizing `# @...` (and `## @...`)
+/// directive syntax recognized by JetBrains, `httpyac`, and `kulala` with
+/// `# > `.
 fn write_comment_line(out: &mut String, line: &str) {
     if line.is_empty() {
         out.push_str("#\n");
     } else if line.trim_start().starts_with('@') {
-        let _ = writeln!(out, "## {line}");
+        let _ = writeln!(out, "# > {line}");
     } else {
         let _ = writeln!(out, "# {line}");
     }

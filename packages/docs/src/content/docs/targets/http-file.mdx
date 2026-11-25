@@ -190,6 +190,20 @@ shadowing, no dangling references, no unused declarations), expanded URL and per
 syntax, header validity, JSON parseability, multipart boundary framing, and the JSON setup blocks
 in `README.md`.
 
+You can also validate generated `.http` files against real HTTP file clients directly from the
+command line:
+
+```sh
+# Run every request block in a file with httpyac (uses .env or http-client.private.env.json)
+httpyac send requests/projects/members/create.http --all --env dev
+
+# Run a single named request block
+httpyac send requests/pets/create.http --name pets_create_dog
+
+# Run with JetBrains HTTP Client CLI
+ijhttp --env dev --private-env-file http-client.private.env.json requests/projects/members/create.http
+```
+
 ## Related resources
 
 - [Targets](/targets/overview/): every built-in target and when to choose each.

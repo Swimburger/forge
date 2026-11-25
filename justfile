@@ -29,6 +29,10 @@ lint:
     cargo clippy --locked --all-targets --all-features -- -D warnings
     cargo clippy --locked --all-targets --no-default-features -- -D warnings
 
+# Validate generated .http files against real HTTP file clients (httpyac, plus ijhttp/kulala-cli if installed)
+verify-http-file:
+    pnpm --filter @internal/http-file-e2e test
+
 # Release builds
 #
 # Every way of getting release binaries puts them in target/binaries/<target>/
